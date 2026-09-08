@@ -7,6 +7,8 @@ from aura.api.routers import activity, approvals, auth, jobs
 from aura.api.security import decode_token
 from aura.api.ws.hub import hub
 from aura.data.seed import seed
+from aura.worker.runner import start_worker
+from aura.worker.stub_orchestrator import StubOrchestrator
 
 app = FastAPI(title="Yuki OS Portal API", version="1.0.0")
 
@@ -28,6 +30,7 @@ app.include_router(activity.router)
 def on_startup() -> None:
     seed()
     hub.bind_loop(asyncio.get_running_loop())
+    app.state.worker_stop = start_worker(StubOrchestrator(), hub)
 
 
 @app.get("/api/health")
