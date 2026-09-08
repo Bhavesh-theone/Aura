@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+*.db
+*.sqlite3
+node_modules/
+.next/
+.superpowers/
+.pytest_cache/

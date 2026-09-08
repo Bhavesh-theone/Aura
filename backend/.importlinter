@@ -1,0 +1,18 @@
+[importlinter]
+root_package = aura
+include_external_packages = True
+
+[importlinter:contract:core-is-pure]
+name = Core depends on nothing internal
+type = forbidden
+source_modules =
+    aura.core
+forbidden_modules =
+    aura.data
+    aura.api
+    aura.worker
+    aura.mcp
+    aura.agents
+    fastapi
+    sqlalchemy
+    pydantic

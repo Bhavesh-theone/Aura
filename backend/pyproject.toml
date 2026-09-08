@@ -1,0 +1,34 @@
+[project]
+name = "aura"
+version = "0.1.0"
+description = "Yuki OS Portal backend"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.19.2",
+    "fastapi>=0.141.1",
+    "passlib[bcrypt]>=1.7.4",
+    "pydantic-settings>=2.15.0",
+    "python-jose[cryptography]>=3.5.0",
+    "python-multipart>=0.0.32",
+    "sqlalchemy>=2.0.52",
+    "uvicorn[standard]>=0.52.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aura"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "import-linter>=2.15",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
