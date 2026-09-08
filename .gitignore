@@ -8,3 +8,10 @@ node_modules/
 .next/
 .superpowers/
 .pytest_cache/
+
+# Confidential business documents — kept local, never pushed.
+# PRD.pdf is stamped "Confidential - Opulence Business Solutions Pvt. Ltd."
+# and these contain real deal names and commercial strategy.
+PRD.pdf
+PRD.md
+ARCHITECTURE.md
