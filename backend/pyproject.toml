@@ -5,8 +5,8 @@ description = "Yuki OS Portal backend"
 requires-python = ">=3.13"
 dependencies = [
     "alembic>=1.19.2",
+    "bcrypt>=5.0.0",
     "fastapi>=0.141.1",
-    "passlib[bcrypt]>=1.7.4",
     "pydantic-settings>=2.15.0",
     "python-jose[cryptography]>=3.5.0",
     "python-multipart>=0.0.32",
