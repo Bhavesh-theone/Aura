@@ -20,6 +20,166 @@ Everything runs on your machine: local model, local database, no cloud services,
 |---|---|---|
 | ![Advance stage](docs/screenshots/advance-stage-dark.png) | ![Decisions](docs/screenshots/decisions.png) | ![Metrics](docs/screenshots/metrics.png) |
 
+## Workflow walkthrough
+
+One deal, ORIGINATED to CLOSED, as it looks in the portal. Every image is the real UI against the real backend: a fresh `aura.data.live_demo` run (the fictional "Godavari Polymers" debt deal) plus the fictional `AUR-101` to `AUR-117` demo deals where a stage is easier to show on one of those. Nothing is mocked. References are to [docs/PRD-v1.md](docs/PRD-v1.md) features (F1 to F10) and sections.
+
+<details open>
+<summary><b>Origination and qualification</b> (steps 1 to 7)</summary>
+
+### 1. Sign in
+Everyone signs in with their own account, and everything they decide is recorded in their name. Four roles: dealmaker, analyst, compliance, admin (PRD §3, F10).
+
+![Sign in](docs/screenshots/workflow/01-login.png)
+
+### 2. Dashboard
+A dealmaker lands on the pipeline overview: open deals, deals by class, decisions waiting, open diligence blockers, the 12-stage funnel and recent activity (PRD F1, F7, §11).
+
+![Dashboard](docs/screenshots/workflow/02-dashboard.png)
+
+### 3. Deals list
+Every deal on the desk, filterable by class, stage and outcome. Only deals whose wall you are on are listed (PRD F1, F10).
+
+![Deals list](docs/screenshots/workflow/03-deals-list.png)
+
+### 4. Open a new deal
+A deal always starts at ORIGINATED, and its first history row is written at once. Every later move is guarded and audited (PRD F1).
+
+![New deal](docs/screenshots/workflow/04-new-deal.png)
+
+### 5. Add the client with statutory identifiers
+Parties carry CIN, PAN, GSTIN or DIN, format-checked and unique per scheme. A malformed PAN is rejected with a clear message (PRD F3).
+
+![Party with identifiers](docs/screenshots/workflow/05-party-identifiers.png)
+
+### 6. A blocked move
+Advance stage lists every guard for the move with its result. With no party carrying an identifier, the T1 guard fails and the move is blocked. Only the role the guard names can override it, and only with a written justification (PRD F2).
+
+![Blocked move](docs/screenshots/workflow/06-guard-blocked.png)
+
+### 7. Guards pass, the deal is QUALIFIED
+Once the client has a CIN and PAN, all checks pass and the move goes through. Each check is stored as a guard evaluation row, pass or fail (PRD F2, F1).
+
+![Guards pass](docs/screenshots/workflow/07-guards-pass.png)
+
+</details>
+
+<details>
+<summary><b>Mandate and preparation</b> (steps 8 and 9)</summary>
+
+### 8. Executed engagement letter, then MANDATED
+Documents carry a version, a sensitivity tier and an executed flag, and the agent's proposed class waits for a human to confirm it. The T2 guard needs an executed engagement letter on file (PRD F5, F2).
+
+![Engagement letter](docs/screenshots/workflow/08-engagement-letter.png)
+
+### 9. Mandate with a hard criterion, then PREPARED
+A mandate records what the client asked for as hard, soft and preference criteria. The T3 guard needs at least one hard criterion (PRD F4, F2).
+
+![Mandate](docs/screenshots/workflow/09-mandate-hard-criteria.png)
+
+</details>
+
+<details>
+<summary><b>Agents and decisions</b> (steps 10 to 13)</summary>
+
+### 10. Put an agent to work
+Classify a document, extract financials or draft an outbound email on the local model. A draft is queued, never sent: it lands in Decisions for a dealmaker (PRD F7, G3).
+
+![Draft email agent](docs/screenshots/workflow/10-draft-email-agent.png)
+
+### 11. A handoff arrives in Decisions
+The agent stops and hands over a closed question with options, a recommendation with its confidence, "if you do nothing" with an auto-escalation countdown, and the evidence (PRD F7, SOSPE I7).
+
+![Handoff in the Decisions inbox](docs/screenshots/workflow/11-handoff-decision.png)
+
+### 12. Resolve it with a directive
+The dealmaker picks an option, gives reasoning (30+ characters), sets the next checkpoint and escalation trigger, and lists what the agent must not revisit. That directive is handed back and the job continues (PRD F7, §9.5.1).
+
+![Directive form](docs/screenshots/workflow/12-directive-form.png)
+
+### 13. Inspect the exact prompt
+Every model call is an agent run: model, template, prompt hash, tokens, latency, confidence and the full prompt. If a run can't be recorded, its output is not used (PRD F8).
+
+![Agent run drawer](docs/screenshots/workflow/13-agent-run-prompt.png)
+
+</details>
+
+<details>
+<summary><b>Marketing to negotiation</b> (steps 14 to 16)</summary>
+
+### 14. Counterparties join: MATCHED
+Investors, lenders and counsel are attached with their identifiers in a role on the deal. The T5 and T6 guards look for a counterparty with an executed NDA and for two counterparties before bidding (PRD F3, F2).
+
+![Matched parties](docs/screenshots/workflow/14-matched-parties.png)
+
+### 15. Diligence checklist with a blocker and a finding
+Entering DILIGENCE creates the checklist from the template. An open blocker stops the move to DOCUMENTATION, and a finding carries its ₹ impact and whether it affects valuation (PRD F6, F2).
+
+![Diligence and findings](docs/screenshots/workflow/15-diligence-finding.png)
+
+### 16. Regression with a reason code
+Permitted backward moves are allowed but need a reason code, and history is append-only (PRD F1).
+
+![Stage history with a regression](docs/screenshots/workflow/16-regression-history.png)
+
+</details>
+
+<details>
+<summary><b>Diligence and compliance</b> (steps 17 and 18)</summary>
+
+### 17. Regulatory flags and compliance sign-off
+A deal with regulatory flags cannot leave DILIGENCE until compliance signs off. The sign-off and its note sit in the rail beside the deal (PRD F2 T9 guard, §3).
+
+![Compliance sign-off](docs/screenshots/workflow/17-compliance-signoff.png)
+
+### 18. Extraction with the 0.95 gate
+Figures feed valuation only at confidence 0.95 or higher, or after a named person verifies them. The database refuses an unverified extraction below 0.95 that claims to feed valuation (PRD F5).
+
+![Extraction gate](docs/screenshots/workflow/18-extraction-gate.png)
+
+</details>
+
+<details>
+<summary><b>Closing</b> (step 19)</summary>
+
+### 19. Conditions precedent, then CLOSED
+The T11 guard needs every condition precedent satisfied or waived. The stage rail shows 12 of 12 complete, and no further move is offered (PRD F2, F1).
+
+![Conditions precedent and closed deal](docs/screenshots/workflow/19-conditions-closed.png)
+
+</details>
+
+<details>
+<summary><b>Assurance: audit, metrics and roles</b> (steps 20 to 22)</summary>
+
+### 20. Activity with the audit chain
+Every stage move, guard override, decision and agent step is a row in a SHA-256 hash chain, checked against a local anchor. The header shows "Chain verified" and "Anchor matches". The T10 override on the Conditions precedent move is visible with its guard name (PRD F9).
+
+![Activity and audit chain](docs/screenshots/workflow/20-activity-audit-chain.png)
+
+### 21. Success metrics
+The six v1 success measures and time in each stage, all computed from the records and not estimated (PRD §11).
+
+![Metrics](docs/screenshots/workflow/21-metrics.png)
+
+### 22. Role gating
+Roles are enforced in the API and shown in the UI. An analyst can do the diligence and document work but cannot move a deal between stages (PRD §3, F2).
+
+![Role gating](docs/screenshots/workflow/22-role-gating.png)
+
+</details>
+
+<details>
+<summary><b>Dark theme</b></summary>
+
+The same screens in the dark theme: the Decisions inbox with an open handoff, and the blocked move.
+
+| Decisions | Blocked move |
+|---|---|
+| ![Decisions, dark](docs/screenshots/workflow/23-dark-decisions.png) | ![Blocked move, dark](docs/screenshots/workflow/24-dark-guard-blocked.png) |
+
+</details>
+
 ## Tech stack
 
 | Layer | Choice |
