@@ -169,6 +169,15 @@ export const isRejection = (action: string, payload: Payload) => action === "han
 /** Shown in the verb or link already, or not useful in a fact row. */
 const HIDDEN_KEYS = new Set(["approved", "handoff_id", "resolved_by", "sha256", "argument_names"]);
 
+/** One array element as text: identifiers read "PAN AAACK1234F", other objects as JSON. */
+function listItem(item: unknown): string {
+  if (item && typeof item === "object") {
+    const o = item as Record<string, unknown>;
+    return typeof o.scheme === "string" && typeof o.value === "string" ? `${o.scheme} ${o.value}` : JSON.stringify(o);
+  }
+  return String(item);
+}
+
 /** Payload → short readable facts; money keys formatted ₹ L / ₹ Cr. */
 export function payloadFacts(payload: Payload): { key: string; value: string; mono?: boolean }[] {
   return Object.entries(payload)
@@ -177,7 +186,7 @@ export function payloadFacts(payload: Payload): { key: string; value: string; mo
     .map(([k, v]) => {
       if (k === "decision" && typeof v === "string") return { key: "Decision", value: DECISION_VERB[v] ? humanize(DECISION_VERB[v]) : humanize(v) };
       if ((k === "from" || k === "to") && Array.isArray(v)) return { key: humanize(k), value: v.length ? v.join(", ") : "none" };
-      if (Array.isArray(v)) return { key: humanize(k), value: v.length ? v.map(String).join(", ") : "none", mono: true };
+      if (Array.isArray(v)) return { key: humanize(k), value: v.length ? v.map(listItem).join(", ") : "none", mono: true };
       if (typeof v === "number" && /(_inr|amount|fee|total|impact)$/i.test(k)) return { key: humanize(k.replace(/_inr$/i, "")), value: formatINRCompact(v), mono: true };
       if (typeof v === "number" || /(_id|hash)$/i.test(k)) return { key: humanize(k), value: String(v), mono: true };
       if (typeof v === "boolean") return { key: humanize(k), value: v ? "Yes" : "No" };
