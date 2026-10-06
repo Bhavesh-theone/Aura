@@ -5,10 +5,15 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from aura.agents.factory import make_orchestrator
-from aura.api.routers import activity, approvals, auth, jobs
+from aura.api.errors import register_error_handlers
+from aura.api.routers import (activity, agent_runs, audit, auth, dashboard, deals, diligence,
+                              documents, extractions, handoffs, jobs, metrics, parties,
+                              users)
 from aura.api.security import decode_token
 from aura.api.ws.hub import hub
+from aura.data.engine import SessionLocal
 from aura.data.seed import seed
+from aura.data.verify_audit import default_anchor_path, refresh_anchor
 from aura.worker.runner import start_worker
 
 app = FastAPI(title="Yuki OS Portal API", version="1.0.0")
@@ -23,14 +28,31 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(jobs.router)
-app.include_router(approvals.router)
+app.include_router(handoffs.router)
+app.include_router(agent_runs.router)
+app.include_router(dashboard.router)
 app.include_router(activity.router)
+for _r in (deals, parties, documents, diligence, audit, users, metrics, extractions):
+    app.include_router(_r.router)
+register_error_handlers(app)
+
+
+def _check_audit_anchor() -> None:
+    """Compare the audit chain with the anchor file; move the anchor up if all is well."""
+    with SessionLocal() as session:
+        result = refresh_anchor(session, default_anchor_path())
+    log = logging.getLogger(__name__)
+    if result.ok:
+        log.info("Audit chain and anchor: OK")
+    else:
+        log.error("AUDIT VERIFICATION FAILED: %s", result.message)
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     logging.basicConfig(level=logging.INFO)
     seed()
+    _check_audit_anchor()
     hub.bind_loop(asyncio.get_running_loop())
     app.state.worker_stop = start_worker(make_orchestrator(), hub)
 
@@ -42,10 +64,11 @@ def health() -> dict:
 
 @app.websocket("/ws/events")
 async def events_socket(websocket: WebSocket, token: str = "") -> None:
-    if decode_token(token) is None:
+    claims = decode_token(token)
+    if claims is None:
         await websocket.close(code=1008)
         return
-    await hub.connect(websocket)
+    await hub.connect(websocket, str(claims.get("username", "")))
     try:
         while True:
             await websocket.receive_text()

@@ -31,20 +31,16 @@ class JobResponse(BaseModel):
     result: dict | None
     deal_id: int | None
     created_at: datetime
-
-
-class ApprovalResponse(BaseModel):
-    id: int
-    segment_id: int
-    category: str
-    proposed_action: dict
-    status: str
+    created_by: str | None = None
 
 
 class AuditResponse(BaseModel):
     id: int
     job_id: int | None
+    deal_id: int | None = None
     actor: str
     action: str
     payload: dict
     created_at: datetime
+    prev_hash: str = ""
+    row_hash: str = ""

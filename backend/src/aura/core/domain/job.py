@@ -12,3 +12,4 @@ class Job:
     deal_id: int | None
     result: dict | None
     created_at: datetime
+    created_by: str | None = None

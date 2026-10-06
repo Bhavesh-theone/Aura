@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -17,7 +17,19 @@ def make_engine(url: str | None = None):
         if ":memory:" in url:
             # One shared connection, else every thread would see an empty database.
             kwargs["poolclass"] = StaticPool
-    return create_engine(url, **kwargs)
+    eng = create_engine(url, **kwargs)
+    if url.startswith("sqlite"):
+        def on_connect(conn, _):
+            # SQLite ignores FOREIGN KEY clauses unless enabled per connection.
+            conn.execute("PRAGMA foreign_keys=ON")
+            # Take transaction control from pysqlite (which would not BEGIN before SAVEPOINT
+            # or DDL); SQLAlchemy emits BEGIN below. Needed for unit-of-work rollbacks and
+            # the savepoints repositories use.
+            conn.isolation_level = None
+
+        event.listen(eng, "connect", on_connect)
+        event.listen(eng, "begin", lambda conn: conn.exec_driver_sql("BEGIN"))
+    return eng
 
 
 engine = make_engine()

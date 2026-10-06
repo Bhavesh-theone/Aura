@@ -1,40 +1,107 @@
 from datetime import datetime
+from enum import Enum
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
+from sqlalchemy import (DDL, JSON, BigInteger, Boolean, CheckConstraint, DateTime, Float,
+                        ForeignKey, Integer, String, Text, UniqueConstraint, event, func)
 from sqlalchemy.orm import Mapped, mapped_column
 
+from aura.core.domain.enums import (AssignmentMode, ChecklistLayer, CPStatus,
+                                    CriterionHardness, CriterionOperator, DealStage,
+                                    DiligenceSeverity, DiligenceStatus, DocClass, FindingType,
+                                    GuardSeverity, HandoffDirection, HandoffStatus,
+                                    HandoffTrigger, IdentifierScheme, JobStatus, MandateSide,
+                                    MandateStatus, Outcome, PartyRole, PartyType, Role,
+                                    SegmentStatus, TaskStatus, TransactionClass)
+from aura.core.policy.stage_policy import TERMINAL_STAGES
 from aura.data.engine import Base
+from aura.data.triggers import APPEND_ONLY_TABLES, append_only_ddl
+
+
+def _one_of(column: str, enum: type[Enum]) -> CheckConstraint:
+    values = ", ".join(f"'{e.value}'" for e in enum)
+    return CheckConstraint(f"{column} IN ({values})", name=f"ck_{column}_valid")
+
+
+_UPPER, _DIGIT, _ALNUM = "[A-Z]", "[0-9]", "[0-9A-Z]"
+
+
+def _glob(*parts: str) -> str:
+    """A quoted GLOB pattern from character classes (repeat a class by multiplying it)."""
+    return "'" + "".join(parts) + "'"
+
+
+# Statutory identifier formats as GLOB, so a malformed value cannot be stored whatever wrote
+# it. GLOB is case sensitive and matches the whole string. Mirrors identifier_policy, which
+# upper-cases before validating.
+IDENTIFIER_FORMAT_CHECK = " OR ".join([
+    f"(scheme = 'PAN' AND value GLOB {_glob(_UPPER * 5, _DIGIT * 4, _UPPER)})",
+    f"(scheme = 'DIN' AND value GLOB {_glob(_DIGIT * 8)})",
+    f"(scheme = 'GSTIN' AND value GLOB "
+    f"{_glob(_DIGIT * 2, _UPPER * 5, _DIGIT * 4, _UPPER, _ALNUM * 3)})",
+    f"(scheme = 'CIN' AND value GLOB "
+    f"{_glob('[LU]', _DIGIT * 5, _UPPER * 2, _DIGIT * 4, _UPPER * 3, _DIGIT * 6)})",
+    f"(scheme = 'LLPIN' AND value GLOB {_glob(_UPPER * 3, '-', _DIGIT * 4)})",
+])
+
+
+def _created_at() -> Mapped[datetime]:
+    return mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class UserRow(Base):
     __tablename__ = "users"
+    __table_args__ = (_one_of("role", Role),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(16))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    created_at: Mapped[datetime] = _created_at()
+
+
+_TERMINAL = ", ".join(f"'{s.value}'" for s in TERMINAL_STAGES)
 
 
 class DealRow(Base):
     __tablename__ = "deals"
+    # Terminal stage <=> outcome set <=> closed_at set.
+    __table_args__ = (
+        _one_of("stage", DealStage), _one_of("transaction_class", TransactionClass),
+        _one_of("outcome", Outcome),
+        CheckConstraint(f"((stage IN ({_TERMINAL})) = (outcome IS NOT NULL)) AND "
+                        "((outcome IS NOT NULL) = (closed_at IS NOT NULL))",
+                        name="ck_deal_terminal_consistent"),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     external_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200))
     stage: Mapped[str] = mapped_column(String(64))
-    owner: Mapped[str] = mapped_column(String(64))
+    transaction_class: Mapped[str] = mapped_column(String(16))
+    # ponytail: FK on username keeps the column a string, so no mapper/MCP changes.
+    owner: Mapped[str] = mapped_column(ForeignKey("users.username", onupdate="CASCADE"))
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    regulatory_flags: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    created_at: Mapped[datetime] = _created_at()
 
 
 class JobRow(Base):
     __tablename__ = "jobs"
+    __table_args__ = (_one_of("status", JobStatus),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     status: Mapped[str] = mapped_column(String(32), index=True)
     inputs: Mapped[dict] = mapped_column(JSON, default=dict)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class SegmentRow(Base):
     __tablename__ = "segments"
+    __table_args__ = (UniqueConstraint("job_id", "seq", name="uq_segment_job_seq"),
+                      _one_of("status", SegmentStatus))
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), index=True)
     seq: Mapped[int] = mapped_column(Integer)
@@ -45,22 +112,354 @@ class SegmentRow(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class ApprovalRow(Base):
-    __tablename__ = "approvals"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    segment_id: Mapped[int] = mapped_column(ForeignKey("segments.id"), index=True)
-    category: Mapped[str] = mapped_column(String(32))
-    proposed_action: Mapped[dict] = mapped_column(JSON, default=dict)
-    status: Mapped[str] = mapped_column(String(16), index=True)
-    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
 class AuditRow(Base):
     __tablename__ = "audit_entries"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), nullable=True, index=True)
+    # Free text on purpose: "system" is a valid actor, and audit rows must outlive users.
     actor: Mapped[str] = mapped_column(String(64))
     action: Mapped[str] = mapped_column(String(64), index=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), nullable=True,
+                                                index=True)
+    prev_hash: Mapped[str] = mapped_column(String(64))
+    row_hash: Mapped[str] = mapped_column(String(64))
+
+
+class DealStageHistoryRow(Base):
+    __tablename__ = "deal_stage_history"
+    __table_args__ = (_one_of("from_stage", DealStage), _one_of("to_stage", DealStage))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    from_stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    to_stage: Mapped[str] = mapped_column(String(64))
+    entered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    actor: Mapped[str] = mapped_column(String(64))
+    reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_regression: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class StageGuardRow(Base):
+    __tablename__ = "stage_guard"
+    __table_args__ = (_one_of("from_stage", DealStage), _one_of("to_stage", DealStage),
+                      _one_of("transaction_class", TransactionClass),
+                      _one_of("severity", GuardSeverity))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    from_stage: Mapped[str] = mapped_column(String(64), index=True)
+    to_stage: Mapped[str] = mapped_column(String(64))
+    transaction_class: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    guard_name: Mapped[str] = mapped_column(String(64), unique=True)
+    sql_text: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(16))
+    override_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+
+class StageGuardEvaluationRow(Base):
+    __tablename__ = "stage_guard_evaluation"
+    __table_args__ = (CheckConstraint("overridden_by IS NULL OR override_justification "
+                                      "IS NOT NULL", name="ck_override_justified"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    guard_id: Mapped[int] = mapped_column(ForeignKey("stage_guard.id"), index=True)
+    # Set when the move succeeded: the history row these evaluations let through.
+    history_id: Mapped[int | None] = mapped_column(ForeignKey("deal_stage_history.id"),
+                                                   nullable=True, index=True)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    result: Mapped[bool] = mapped_column(Boolean)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    actor: Mapped[str] = mapped_column(String(64))
+    overridden_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    override_justification: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PartyRow(Base):
+    __tablename__ = "party"
+    __table_args__ = (_one_of("party_type", PartyType),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    party_type: Mapped[str] = mapped_column(String(16))
+    display_name: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PartyIdentifierRow(Base):
+    __tablename__ = "party_identifier"
+    __table_args__ = (UniqueConstraint("scheme", "value", name="uq_identifier_scheme_value"),
+                      _one_of("scheme", IdentifierScheme),
+                      CheckConstraint(IDENTIFIER_FORMAT_CHECK, name="ck_identifier_format"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    party_id: Mapped[int] = mapped_column(ForeignKey("party.id"), index=True)
+    scheme: Mapped[str] = mapped_column(String(8))
+    value: Mapped[str] = mapped_column(String(32))
+
+
+class DealPartyRow(Base):
+    __tablename__ = "deal_party"
+    __table_args__ = (_one_of("role", PartyRole),)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), primary_key=True)
+    party_id: Mapped[int] = mapped_column(ForeignKey("party.id"), primary_key=True)
+    role: Mapped[str] = mapped_column(String(16), primary_key=True)
+
+
+class MandateRow(Base):
+    __tablename__ = "mandate"
+    __table_args__ = (_one_of("side", MandateSide), _one_of("status", MandateStatus))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    side: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MandateCriteriaRow(Base):
+    """SOSPE §6.2. value is JSON; weight is 0..1 and required for soft criteria."""
+    __tablename__ = "mandate_criteria"
+    __table_args__ = (_one_of("hardness", CriterionHardness),
+                      _one_of("operator", CriterionOperator),
+                      CheckConstraint("hardness != 'soft' OR weight IS NOT NULL",
+                                      name="ck_soft_needs_weight"),
+                      CheckConstraint("weight IS NULL OR (weight >= 0 AND weight <= 1)",
+                                      name="ck_weight_range"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mandate_id: Mapped[int] = mapped_column(ForeignKey("mandate.id"), index=True)
+    criterion_key: Mapped[str] = mapped_column(String(100))
+    operator: Mapped[str] = mapped_column(String(16))
+    value: Mapped[object] = mapped_column(JSON)
+    hardness: Mapped[str] = mapped_column(String(16))
+    weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class DocumentRow(Base):
+    __tablename__ = "document"
+    __table_args__ = (_one_of("doc_class", DocClass),
+                      CheckConstraint("sensitivity BETWEEN 1 AND 4", name="ck_sensitivity_range"),
+                      CheckConstraint("contains_upsi = 0 OR sensitivity = 4",
+                                      name="ck_upsi_sensitivity"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    doc_class: Mapped[str] = mapped_column(String(32))
+    filename: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    current_version: Mapped[int] = mapped_column(Integer, default=1)
+    contains_upsi: Mapped[bool] = mapped_column(Boolean, default=False)
+    sensitivity: Mapped[int] = mapped_column(Integer)
+    uploaded_by: Mapped[str] = mapped_column(String(64))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    class_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_executed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+
+class DocVersionRow(Base):
+    __tablename__ = "doc_version"
+    document_id: Mapped[int] = mapped_column(ForeignKey("document.id"), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    uploaded_by: Mapped[str] = mapped_column(String(64))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ExtractionRow(Base):
+    __tablename__ = "extraction"
+    # An extraction that feeds a valuation is either confident or human-verified.
+    __table_args__ = (
+        CheckConstraint("NOT feeds_valuation OR confidence >= 0.95 OR "
+                        "human_verified_by IS NOT NULL", name="ck_extraction_valuation_gate"),
+        CheckConstraint("confidence >= 0 AND confidence <= 1",
+                        name="ck_extraction_confidence_range"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("document.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    schema_name: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    confidence: Mapped[float] = mapped_column(Float)
+    feeds_valuation: Mapped[bool] = mapped_column(Boolean, default=False)
+    human_verified_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    human_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                               nullable=True)
+    model_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_run.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DocAccessLogRow(Base):
+    __tablename__ = "doc_access_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("document.id"), index=True)
+    accessed_by: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(32))
+    accessed_at: Mapped[datetime] = _created_at()
+
+
+class ChecklistTemplateRow(Base):
+    __tablename__ = "checklist_template"
+    __table_args__ = (_one_of("transaction_class", TransactionClass),
+                      _one_of("layer", ChecklistLayer))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    transaction_class: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    layer: Mapped[str] = mapped_column(String(16))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    name: Mapped[str] = mapped_column(String(200))
+
+
+class ChecklistItemTemplateRow(Base):
+    __tablename__ = "checklist_item_template"
+    __table_args__ = (_one_of("transaction_class", TransactionClass),
+                      _one_of("default_severity", DiligenceSeverity))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    template_id: Mapped[int] = mapped_column(ForeignKey("checklist_template.id"), index=True)
+    transaction_class: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    category: Mapped[str] = mapped_column(String(64))
+    prompt: Mapped[str] = mapped_column(Text)
+    default_severity: Mapped[str] = mapped_column(String(16))
+
+
+class DiligenceItemRow(Base):
+    __tablename__ = "diligence_item"
+    __table_args__ = (
+        _one_of("severity", DiligenceSeverity), _one_of("status", DiligenceStatus),
+        CheckConstraint("status != 'satisfied' OR "
+                        "COALESCE(json_array_length(evidence_doc_ids), 0) > 0",
+                        name="ck_satisfied_needs_evidence"),
+        CheckConstraint("status != 'waived' OR waiver_justification IS NOT NULL",
+                        name="ck_waived_needs_justification"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("checklist_item_template.id"), nullable=True)
+    prompt: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16))
+    evidence_doc_ids: Mapped[list] = mapped_column(JSON, default=list)
+    waiver_justification: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class FindingRow(Base):
+    __tablename__ = "finding"
+    __table_args__ = (
+        _one_of("finding_type", FindingType),
+        CheckConstraint("NOT affects_valuation OR quantified_impact_inr IS NOT NULL",
+                        name="ck_finding_impact_required"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    diligence_item_id: Mapped[int] = mapped_column(ForeignKey("diligence_item.id"), index=True)
+    finding_type: Mapped[str] = mapped_column(String(16))
+    description: Mapped[str] = mapped_column(Text)
+    quantified_impact_inr: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    affects_valuation: Mapped[bool] = mapped_column(Boolean, default=False)
+    raised_by: Mapped[str] = mapped_column(String(64))
+    raised_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DealSignoffRow(Base):
+    __tablename__ = "deal_signoff"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    signed_by: Mapped[str] = mapped_column(String(64))
+    note: Mapped[str] = mapped_column(Text, default="")
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ConditionPrecedentRow(Base):
+    __tablename__ = "condition_precedent"
+    __table_args__ = (_one_of("status", CPStatus),
+                      CheckConstraint("status != 'waived' OR waiver_justification IS NOT NULL",
+                                      name="ck_cp_waived_needs_justification"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    cp_type: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16))
+    waiver_justification: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class TaskRow(Base):
+    __tablename__ = "task"
+    __table_args__ = (_one_of("assignment_mode", AssignmentMode),
+                      _one_of("status", TaskStatus))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), nullable=True,
+                                                index=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), nullable=True,
+                                               index=True)
+    task_type: Mapped[str] = mapped_column(String(64))
+    assignment_mode: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    materiality_inr: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class HandoffRow(Base):
+    __tablename__ = "handoff"
+    __table_args__ = (_one_of("direction", HandoffDirection), _one_of("trigger", HandoffTrigger),
+                      _one_of("status", HandoffStatus))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("task.id"), index=True)
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), nullable=True,
+                                                index=True)
+    direction: Mapped[str] = mapped_column(String(16))
+    trigger: Mapped[str] = mapped_column(String(32))
+    context_package: Mapped[dict] = mapped_column(JSON, default=dict)
+    directive: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    auto_escalate_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                              nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    resolved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentRunRow(Base):
+    __tablename__ = "agent_run"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), nullable=True, index=True)
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), nullable=True,
+                                                index=True)
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("task.id"), nullable=True)
+    archetype: Mapped[str] = mapped_column(String(64))
+    model_id: Mapped[str] = mapped_column(String(128))
+    model_version: Mapped[str] = mapped_column(String(128))
+    prompt_template_id: Mapped[str] = mapped_column(String(128))
+    prompt_hash: Mapped[str] = mapped_column(String(64))
+    input_digest: Mapped[dict] = mapped_column(JSON, default=dict)
+    output: Mapped[dict] = mapped_column(JSON, default=dict)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cost_inr: Mapped[float] = mapped_column(Float, default=0, server_default="0")
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    tool_calls: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class WallRow(Base):
+    __tablename__ = "wall"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 server_default=func.now())
+
+
+class WallMemberRow(Base):
+    __tablename__ = "wall_member"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    wall_id: Mapped[int] = mapped_column(ForeignKey("wall.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                               server_default=func.now())
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# create_all installs the same append-only triggers the migration does.
+for _table in APPEND_ONLY_TABLES:
+    for _sql in append_only_ddl(_table):
+        event.listen(Base.metadata.tables[_table], "after_create",
+                     DDL(_sql).execute_if(dialect="sqlite"))

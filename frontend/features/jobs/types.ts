@@ -1,11 +1,5 @@
-export type JobStatus =
-  | "queued"
-  | "running"
-  | "awaiting_approval"
-  | "complete"
-  | "completed"
-  | "failed"
-  | string;
+/** Job statuses as the backend emits them (core/domain/enums.py JobStatus). */
+export type JobStatus = "pending" | "running" | "awaiting_approval" | "complete" | "failed" | "rejected";
 
 export type JobSegment = {
   id: number;
@@ -17,6 +11,7 @@ export type JobSegment = {
   detail?: string | null;
 };
 
+/** JobResponse (api/schemas/dto.py). */
 export type Job = {
   id: number;
   status: JobStatus;
@@ -24,8 +19,13 @@ export type Job = {
   result: Record<string, unknown> | null;
   deal_id: number | null;
   created_at: string;
-  /** Optional — some backends embed the segment timeline in the job payload. */
-  segments?: JobSegment[];
+  created_by: string | null;
 };
 
-export type CreateJobRequest = { inputs: Record<string, unknown>; deal_id: number | null };
+/** Agent capabilities the portal can launch (backend submit_job). */
+export type Capability = "classify_document" | "draft_email" | "extract_financials";
+
+export type CreateJobRequest = {
+  deal_id: number | null;
+  inputs: { capability?: Capability; document_id?: number; party_id?: number; brief?: string } & Record<string, unknown>;
+};

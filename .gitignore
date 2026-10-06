@@ -15,3 +15,6 @@ node_modules/
 PRD.pdf
 PRD.md
 ARCHITECTURE.md
+
+# Playwright MCP browser scratch output
+.playwright-mcp/

@@ -2,11 +2,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from aura.api.deps import get_session
+from aura.api.deps import get_uow
 from aura.api.main import app
 from aura.api.security import hash_password
 from aura.data.engine import Base, make_engine
 from aura.data.models.tables import UserRow
+from aura.data.uow import SqlUnitOfWork
 
 
 @pytest.fixture()
@@ -15,10 +16,14 @@ def client():
     Base.metadata.create_all(engine)
     session = Session(engine)
     session.add(UserRow(username="bhavesh", password_hash=hash_password("admin123"),
-                        role="admin"))
+                        role="dealmaker"))
     session.commit()
 
-    app.dependency_overrides[get_session] = lambda: session
+    def override():
+        with SqlUnitOfWork(session).transaction() as uow:
+            yield uow
+
+    app.dependency_overrides[get_uow] = override
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -50,8 +55,13 @@ def test_jobs_require_auth(client):
     assert client.get("/api/jobs").status_code == 401
 
 
-def test_approvals_list_is_empty_initially(client):
+def test_handoffs_list_is_empty_initially(client):
     headers = {"Authorization": f"Bearer {_token(client)}"}
-    r = client.get("/api/approvals", headers=headers)
+    r = client.get("/api/handoffs", headers=headers)
     assert r.status_code == 200
     assert r.json() == []
+
+
+def test_the_approvals_api_is_gone(client):
+    headers = {"Authorization": f"Bearer {_token(client)}"}
+    assert client.get("/api/approvals", headers=headers).status_code == 404

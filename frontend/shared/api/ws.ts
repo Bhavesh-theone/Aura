@@ -1,11 +1,22 @@
 import { API_BASE } from "./client";
 
+/** Every event type the backend publishes (core/services/*, core/services/notifying_audit.py). */
 export type EventType =
   | "job_submitted"
-  | "approval_required"
-  | "approval_decided"
   | "job_complete"
-  | "job_failed";
+  | "job_failed"
+  | "handoff_created"
+  | "handoff_resolved"
+  | "handoff_escalated"
+  | "entity_changed";
+
+/** core/policy/entity_policy.py ENTITY_KINDS. */
+export const ENTITY_KINDS = ["deal", "document", "diligence", "condition", "handoff", "job", "finding", "extraction", "signoff"] as const;
+export type EntityKind = (typeof ENTITY_KINDS)[number];
+
+export type JobEventPayload = { job_id: number; deal_id: number | null };
+export type HandoffEventPayload = { handoff_id: number; job_id: number | null; deal_id: number | null; approved?: boolean };
+export type EntityChangedPayload = { kind: EntityKind; deal_id: number | null };
 
 export type YukiEvent = { type: EventType; payload: Record<string, unknown> };
 
@@ -49,6 +60,15 @@ class EventSocket {
 
     this.token = token;
     this.stopped = false;
+    this.open();
+  }
+
+  /** Reconnect now (e.g. the server just came back) instead of waiting out the backoff. */
+  kick() {
+    if (this.stopped || this.status === "open" || this.status === "connecting") return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.retries = 0;
     this.open();
   }
 
@@ -98,7 +118,7 @@ class EventSocket {
       try {
         const data = JSON.parse(String(raw.data));
         if (data && typeof data.type === "string") {
-          parsed = { type: data.type as EventType, payload: data.payload ?? {} };
+          parsed = { type: data.type, payload: data.payload ?? {} };
         }
       } catch {
         return;
@@ -149,13 +169,17 @@ class EventSocket {
 
   onEvent(listener: EventListener) {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   onStatus(listener: StatusListener) {
     this.statusListeners.add(listener);
     listener(this.status);
-    return () => this.statusListeners.delete(listener);
+    return () => {
+      this.statusListeners.delete(listener);
+    };
   }
 }
 

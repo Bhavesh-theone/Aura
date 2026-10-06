@@ -10,6 +10,7 @@ class ProposedAction:
     category: ActionCategory
     arguments: dict
     summary: str
+    materiality_inr: int | None = None
 
 
 @dataclass

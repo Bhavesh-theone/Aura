@@ -29,3 +29,17 @@ def test_unmapped_tool_is_treated_as_gated():
 
 def test_no_tool_call_means_no_action():
     assert decide_action("Here is a draft with no tool call.", {}) is None
+
+
+def test_the_email_draft_is_the_drafters_output_not_the_reviewers_critique():
+    from types import SimpleNamespace as NS
+
+    from aura.agents.crewai.orchestrator import split_subject, task_texts
+    out = NS(tasks_output=[NS(raw="facts"), NS(raw="Subject: Working capital\n\nDear team,\nHi"),
+                           NS(raw="1. Capitalise the name.")])
+    assert task_texts(out, 1).startswith("Subject:")
+    assert task_texts(out, 5) == "" and task_texts(object(), 1) == ""
+    assert split_subject(task_texts(out, 1), "Regarding X") == ("Working capital",
+                                                                "Dear team,\nHi")
+    assert split_subject("**Subject:** Hello\nBody", "d") == ("Hello", "Body")
+    assert split_subject("Dear team", "Regarding X") == ("Regarding X", "Dear team")
