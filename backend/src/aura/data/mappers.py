@@ -35,7 +35,9 @@ def segment_to_domain(row: SegmentRow) -> Segment:
     return Segment(id=row.id, job_id=row.job_id, seq=row.seq,
                    status=SegmentStatus(row.status), context_in=row.context_in or {},
                    context_out=row.context_out, started_at=row.started_at,
-                   ended_at=row.ended_at)
+                   ended_at=row.ended_at, claimed_by=row.claimed_by,
+                   claimed_at=row.claimed_at, attempts=row.attempts or 0,
+                   not_before=row.not_before, last_error=row.last_error)
 
 
 def audit_to_domain(row: AuditRow) -> AuditEntry:
@@ -147,7 +149,8 @@ def agent_run_to_domain(row: AgentRunRow) -> AgentRun:
         input_digest=row.input_digest or {}, output=row.output or {},
         confidence=row.confidence, tokens_in=row.tokens_in, tokens_out=row.tokens_out,
         cost_inr=row.cost_inr, latency_ms=row.latency_ms, started_at=row.started_at,
-        completed_at=row.completed_at, tool_calls=list(row.tool_calls or []))
+        completed_at=row.completed_at, tool_calls=list(row.tool_calls or []),
+        segment_id=row.segment_id)
 
 
 def finding_to_domain(row: FindingRow, deal_id: int) -> Finding:

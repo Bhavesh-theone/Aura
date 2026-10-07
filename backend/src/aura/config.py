@@ -22,6 +22,26 @@ class Settings(BaseSettings):
     # default database (see aura.data.verify_audit.default_anchor_path).
     audit_anchor_path: str | None = None
 
+    # Harness reliability (see RUNNING.md, "Retries, dead letters and recovery").
+    # A RUNNING segment whose claim is older than this is presumed orphaned (crash) and is
+    # requeued, or dead-lettered once it has used all its attempts.
+    segment_lease_seconds: int = 900
+    # Claims per segment before a transient failure dead-letters it.
+    segment_max_attempts: int = 3
+    # Backoff before a retried segment may run again: base, 2x, 4x, ...
+    segment_backoff_seconds: float = 10.0
+    # Retries of one model call on a transient error (each attempt is its own agent_run).
+    llm_max_retries: int = 2
+    llm_retry_backoff_seconds: float = 1.0
+    # Per-segment budget: exceeding either fails the segment (permanent, not retried).
+    max_llm_calls_per_segment: int = 12
+    max_segment_seconds: int = 600
+    # Daily budget across all segments (agent_run rows since 00:00 UTC). When reached, new
+    # segments are deferred to the next UTC day.
+    max_llm_calls_per_day: int = 2000
+    # How long a model health check is trusted before the worker asks Ollama again.
+    orchestrator_health_ttl_seconds: float = 30.0
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -4,13 +4,18 @@ None of these commit: they flush, and the unit of work that owns the session com
 Deal-scoped ones take a `viewer` (see aura.data.walls) and only ever see deals behind walls
 that viewer is on.
 """
+import sqlite3
 import threading
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from aura.core.clock import utcnow
 from aura.core.domain.agent_run import AgentRun
+from aura.core.domain.errors import Conflict
+from aura.core.domain.job import IdempotencyRecord
 from aura.core.domain.audit import GENESIS_HASH, AuditEntry, compute_row_hash
 from aura.core.domain.enums import HandoffStatus, Role, SegmentStatus
 from aura.core.domain.handoff import Handoff, Task
@@ -18,11 +23,17 @@ from aura.core.domain.job import Job
 from aura.core.domain.segment import Segment
 from aura.core.domain.user import User
 from aura.data import mappers
-from aura.data.models.tables import (AgentRunRow, AuditRow, HandoffRow, JobRow, SegmentRow,
-                                     TaskRow, UserRow)
+from aura.data.models.tables import (AgentRunRow, AuditRow, HandoffRow, IdempotencyKeyRow,
+                                     JobRow, SegmentRow, TaskRow, UserRow)
 from aura.data.walls import Viewer, check_viewer, walled
 
 _AUDIT_LOCK = threading.Lock()
+# UPDATE ... RETURNING needs SQLite 3.35 (other databases have it).
+_HAS_RETURNING = sqlite3.sqlite_version_info >= (3, 35)
+
+
+def _locked(exc: OperationalError) -> bool:
+    return "locked" in str(exc).lower() or "busy" in str(exc).lower()
 
 
 class SqlJobRepository:
@@ -80,21 +91,67 @@ class SqlSegmentRepository:
         row.status = segment.status.value
         row.context_out = segment.context_out
         row.started_at, row.ended_at = segment.started_at, segment.ended_at
+        row.claimed_by, row.claimed_at = segment.claimed_by, segment.claimed_at
+        row.attempts, row.not_before = segment.attempts, segment.not_before
+        row.last_error = segment.last_error
         self.s.flush()
         self.s.refresh(row)
         return mappers.segment_to_domain(row)
 
-    def claim_next_queued(self) -> Segment | None:
-        row = self.s.scalars(
-            select(SegmentRow).where(SegmentRow.status == SegmentStatus.QUEUED.value)
-            .order_by(SegmentRow.id.asc()).limit(1)
-        ).first()
-        return mappers.segment_to_domain(row) if row else None
+    def _claimable(self, now: datetime):
+        return (select(SegmentRow.id)
+                .where(SegmentRow.status == SegmentStatus.QUEUED.value,
+                       or_(SegmentRow.not_before.is_(None), SegmentRow.not_before <= now))
+                .order_by(SegmentRow.id.asc()).limit(1))
+
+    def claim_next_queued(self, worker_id: str = "worker",
+                          now: datetime | None = None) -> Segment | None:
+        """One conditional UPDATE takes the oldest runnable queued segment, so two workers
+        (or threads) can never both claim it: the loser's UPDATE matches no row. Call it
+        first in a fresh transaction and commit straight after, so the write lock is held
+        for as short a time as possible."""
+        now = now or utcnow()
+        values = {"status": SegmentStatus.RUNNING.value, "claimed_by": worker_id,
+                  "claimed_at": now, "attempts": SegmentRow.attempts + 1}
+        if _HAS_RETURNING:
+            stmt = (update(SegmentRow)
+                    .where(SegmentRow.id == self._claimable(now).scalar_subquery(),
+                           SegmentRow.status == SegmentStatus.QUEUED.value)
+                    .values(**values).returning(SegmentRow.id)
+                    .execution_options(synchronize_session=False))
+            claimed_id = self.s.execute(stmt).scalar_one_or_none()
+        else:  # SQLite < 3.35: pick, then update only if it is still queued
+            claimed_id = None
+            candidate = self.s.scalar(self._claimable(now))
+            if candidate is not None:
+                result = self.s.execute(
+                    update(SegmentRow)
+                    .where(SegmentRow.id == candidate,
+                           SegmentRow.status == SegmentStatus.QUEUED.value)
+                    .values(**values).execution_options(synchronize_session=False))
+                claimed_id = candidate if result.rowcount == 1 else None
+        if claimed_id is None:
+            return None
+        row = self.s.get(SegmentRow, claimed_id, populate_existing=True)
+        return mappers.segment_to_domain(row)
 
     def list_for_job(self, job_id: int) -> list[Segment]:
         rows = self.s.scalars(
             select(SegmentRow).where(SegmentRow.job_id == job_id).order_by(SegmentRow.seq)
         ).all()
+        return [mappers.segment_to_domain(r) for r in rows]
+
+    def list_stale_running(self, claimed_before: datetime) -> list[Segment]:
+        rows = self.s.scalars(
+            select(SegmentRow).where(
+                SegmentRow.status == SegmentStatus.RUNNING.value,
+                or_(SegmentRow.claimed_at.is_(None), SegmentRow.claimed_at < claimed_before))
+            .order_by(SegmentRow.id)).all()
+        return [mappers.segment_to_domain(r) for r in rows]
+
+    def list_by_status(self, status: SegmentStatus) -> list[Segment]:
+        rows = self.s.scalars(select(SegmentRow).where(SegmentRow.status == status.value)
+                              .order_by(SegmentRow.id.desc())).all()
         return [mappers.segment_to_domain(r) for r in rows]
 
 
@@ -183,6 +240,30 @@ class SqlHandoffRepository:
             HandoffRow.auto_escalate_at.is_not(None),
             HandoffRow.auto_escalate_at <= now))
 
+    def mark_resolved(self, handoff: Handoff) -> bool:
+        """Resolve only while the row is still open or escalated. The UPDATE's WHERE is the
+        check, so of two concurrent resolves exactly one matches; the other sees rowcount 0
+        (or, while the winner still holds SQLite's write lock, 'database is locked') and
+        loses. The viewer's walls still apply: an off-wall handoff never matches."""
+        visible = walled(select(HandoffRow.id).where(HandoffRow.id == handoff.id), self.viewer,
+                         HandoffRow.deal_id, include_unattached=True)
+        stmt = (update(HandoffRow)
+                .where(HandoffRow.id.in_(visible.scalar_subquery()),
+                       HandoffRow.status.in_([HandoffStatus.OPEN.value,
+                                              HandoffStatus.ESCALATED.value]))
+                .values(status=HandoffStatus.RESOLVED.value, directive=handoff.directive,
+                        resolved_by=handoff.resolved_by, resolved_at=handoff.resolved_at)
+                .execution_options(synchronize_session=False))
+        try:
+            won = self.s.execute(stmt).rowcount == 1
+        except OperationalError as exc:
+            if _locked(exc):
+                return False
+            raise
+        if won:
+            self.s.get(HandoffRow, handoff.id, populate_existing=True)
+        return won
+
 
 class SqlAgentRunRepository:
     def __init__(self, session: Session, viewer: Viewer):
@@ -196,11 +277,24 @@ class SqlAgentRunRepository:
             input_digest=run.input_digest, output=run.output, confidence=run.confidence,
             tokens_in=run.tokens_in, tokens_out=run.tokens_out, cost_inr=run.cost_inr,
             latency_ms=run.latency_ms, started_at=run.started_at,
-            completed_at=run.completed_at, tool_calls=run.tool_calls)
+            completed_at=run.completed_at, tool_calls=run.tool_calls,
+            segment_id=run.segment_id)
         self.s.add(row)
         self.s.flush()
         self.s.refresh(row)
         return mappers.agent_run_to_domain(row)
+
+    def count_since(self, since: datetime) -> int:
+        stmt = walled(select(func.count(AgentRunRow.id)).where(AgentRunRow.started_at >= since),
+                      self.viewer, AgentRunRow.deal_id, include_unattached=True)
+        return self.s.scalar(stmt) or 0
+
+    def link_task(self, segment_id: int, task_id: int) -> int:
+        result = self.s.execute(
+            update(AgentRunRow)
+            .where(AgentRunRow.segment_id == segment_id, AgentRunRow.task_id.is_(None))
+            .values(task_id=task_id).execution_options(synchronize_session=False))
+        return result.rowcount or 0
 
     def get(self, run_id: int) -> AgentRun | None:
         row = self.s.scalars(walled(select(AgentRunRow).where(AgentRunRow.id == run_id),
@@ -247,6 +341,44 @@ class SqlAuditRepository:
         stmt = walled(select(func.count(AuditRow.id)).where(AuditRow.action == action),
                       self.viewer, AuditRow.deal_id, include_unattached=True)
         return self.s.scalar(stmt) or 0
+
+
+class SqlIdempotencyRepository:
+    """Keys are per user: a key only ever finds the caller's own record."""
+
+    def __init__(self, session: Session):
+        self.s = session
+
+    @staticmethod
+    def _to_domain(row: IdempotencyKeyRow) -> IdempotencyRecord:
+        return IdempotencyRecord(id=row.id, key=row.key, username=row.username,
+                                 request_hash=row.request_hash, job_id=row.job_id,
+                                 created_at=row.created_at)
+
+    def get(self, key: str, username: str) -> IdempotencyRecord | None:
+        row = self.s.scalars(select(IdempotencyKeyRow).where(
+            IdempotencyKeyRow.key == key, IdempotencyKeyRow.username == username)).first()
+        return self._to_domain(row) if row else None
+
+    def add(self, record: IdempotencyRecord) -> IdempotencyRecord:
+        row = IdempotencyKeyRow(key=record.key, username=record.username,
+                                request_hash=record.request_hash, job_id=record.job_id,
+                                created_at=record.created_at)
+        try:
+            with self.s.begin_nested():
+                self.s.add(row)
+                self.s.flush()
+        except IntegrityError:
+            raise Conflict("This Idempotency-Key is already being used by another "
+                           "request") from None
+        self.s.refresh(row)
+        return self._to_domain(row)
+
+    def delete(self, record_id: int) -> None:
+        row = self.s.get(IdempotencyKeyRow, record_id)
+        if row is not None:
+            self.s.delete(row)
+            self.s.flush()
 
 
 class SqlUserRepository:

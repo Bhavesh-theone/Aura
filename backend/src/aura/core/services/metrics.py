@@ -28,6 +28,27 @@ class StageDwell:
 
 
 @dataclass
+class ReliabilityMetrics:
+    """Harness reliability, counted from the audit trail (so wall-filtered too)."""
+    dead_lettered_segments: int
+    retried_segments: int
+    recovered_segments: int
+    fallback_runs: int
+    budget_deferrals: int
+
+
+def reliability_metrics(audit: AuditRepository) -> ReliabilityMetrics:
+    return ReliabilityMetrics(
+        dead_lettered_segments=audit.count_by_action("segment_dead_lettered"),
+        # automatic retries after a transient failure, plus retries a person asked for
+        retried_segments=audit.count_by_action("segment_retry_scheduled")
+        + audit.count_by_action("segment_retried"),
+        recovered_segments=audit.count_by_action("segment_recovered"),
+        fallback_runs=audit.count_by_action("orchestrator_fallback"),
+        budget_deferrals=audit.count_by_action("budget_deferred"))
+
+
+@dataclass
 class Metrics:
     stage_dwell: list[StageDwell]
     guarded_forward_transitions_pct: float
@@ -36,6 +57,7 @@ class Metrics:
     handoff_rejections_422: int
     outbound_executed: int
     deals_closed_end_to_end: int
+    reliability: ReliabilityMetrics | None = None
 
 
 def _naive_utc(value: datetime) -> datetime:
@@ -106,4 +128,6 @@ def compute_metrics(deals: DealRepository, history: StageHistoryRepository,
         audit_chain_ok=audit_chain_ok,
         handoff_rejections_422=audit.count_by_action("handoff_rejected"),
         outbound_executed=audit.count_by_action("outbound_executed"),
-        deals_closed_end_to_end=closed_end_to_end)
+        deals_closed_end_to_end=closed_end_to_end,
+        reliability=reliability_metrics(audit))
+

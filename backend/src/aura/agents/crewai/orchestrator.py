@@ -100,7 +100,21 @@ def parse_extraction(output: str) -> tuple[dict, float]:
     return figures, float(confidence)
 
 
+# Set on a segment's context_out when its next segment only has to finish the job once a
+# person has approved (formerly 'approved_draft', which suggested approval had happened).
+RESUME_MARKER = "resume_after_approval"
+
+
+def with_additional_attempts(action: ProposedAction,
+                             others: list[ProposedAction]) -> ProposedAction:
+    action.additional_gated_attempts = [
+        {"tool": o.tool, "category": o.category.value, "arguments": o.arguments,
+         "materiality_inr": o.materiality_inr} for o in others]
+    return action
+
+
 class CrewOrchestrator:
+
     """Implements core.ports.orchestrator.Orchestrator.
 
     The crew gets the deals MCP tools, every call gated by gate_policy before it runs (see
@@ -130,15 +144,17 @@ class CrewOrchestrator:
         return RunRecorder(run_context, s.ollama_model, self._digest)
 
     def run(self, context_in: dict, run_context: RunContext) -> OrchestratorResult:
-        # A segment resumed after a human decision: finish.
-        if context_in.get("approved_draft") or context_in.get("sent") \
-                or context_in.get("proposal_made"):
+        # A segment resumed after a human decision: finish. ('approved_draft' is the old
+        # name of resume_after_approval, still read for jobs queued before the rename.)
+        if context_in.get(RESUME_MARKER) or context_in.get("approved_draft") \
+                or context_in.get("sent") or context_in.get("proposal_made"):
             done = {**context_in, "sent": True} if not context_in.get("proposal_made") \
                 else dict(context_in)
             return OrchestratorResult(completed=True, context_out=done, proposed_action=None)
 
         from aura.agents.crewai.recording_llm import instrument_llm
         recorder = self._recorder(run_context)
+
         llm = instrument_llm(self._make_llm(), recorder)
         capability = context_in.get("capability")
         with acting_as(run_context.username):
@@ -165,14 +181,16 @@ class CrewOrchestrator:
         crew = build_crew(llm, tools)
         output = str(crew.kickoff(inputs={"brief": context_in.get("brief", "")}))
 
-        # A gated tool call the agent attempted was never run; it becomes the handoff.
-        # Otherwise fall back to a tool call written out in the final answer.
-        action = gate.proposals[0] if gate.proposals else \
+        # A gated tool call the agent attempted was never run; it becomes the handoff (any
+        # further attempts ride along as evidence). Otherwise fall back to a tool call
+        # written out in the final answer.
+        action = with_additional_attempts(gate.proposals[0], gate.proposals[1:]) \
+            if gate.proposals else \
             decide_action(output, context_in, get_settings().materiality_cap_inr)
         if action is not None:
             return OrchestratorResult(
                 completed=False,
-                context_out={**context_in, "draft": output, "approved_draft": True},
+                context_out={**context_in, "draft": output, RESUME_MARKER: True},
                 proposed_action=action,
             )
         return OrchestratorResult(completed=True,
@@ -223,7 +241,7 @@ class CrewOrchestrator:
         brief = (f"Draft a short, professional outbound email to {party['display_name']} "
                  f"(the {party['role']}) about deal {deal['name']}, currently at stage "
                  f"{deal['stage']}. {context_in.get('brief', '')}").strip()
-        _, tools = self._crew_tools(brief, username)
+        gate, tools = self._crew_tools(brief, username)
         crew = build_crew(llm, tools)
         result = crew.kickoff(inputs={"brief": brief})
         # The draft is the Drafter's output; the Reviewer's final answer is its critique
@@ -237,6 +255,9 @@ class CrewOrchestrator:
                        "subject": subject, "body": body,
                        **({"review_notes": review} if draft and review != draft else {})},
             summary=f"Draft an outbound email to {party['display_name']} about {deal['name']}")
+        # Gated tools the crew tried along the way (send_email, say) never ran; the person
+        # deciding on the draft sees them instead of their being dropped.
+        action = with_additional_attempts(action, gate.proposals)
         return OrchestratorResult(completed=False,
                                   context_out={**context_in, "draft": body,
                                                "proposal_made": True},

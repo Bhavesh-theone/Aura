@@ -10,6 +10,16 @@ class AgentRunLogError(Exception):
     """An agent run could not be recorded, so its output must not be used."""
 
 
+class BudgetExceeded(Exception):
+    """A segment used up its model-call or wall-clock budget. Permanent: retrying the same
+    segment would only spend the budget again."""
+
+
+class TransientModelError(Exception):
+    """The model could not be reached or answered with a temporary error. Adapters raise
+    (or wrap in) this so the worker retries the segment instead of failing it."""
+
+
 @runtime_checkable
 class AgentRunSink(Protocol):
     def record(self, run: AgentRun) -> AgentRun:
@@ -25,6 +35,7 @@ class RunContext:
     task_id: int | None
     runs: AgentRunSink
     username: str | None = None
+    segment_id: int | None = None
 
 
 @dataclass

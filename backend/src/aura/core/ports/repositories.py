@@ -8,10 +8,11 @@ from aura.core.domain.diligence import (ChecklistItemTemplate, ConditionPreceden
                                         DiligenceItem, Finding)
 from aura.core.domain.document import Document, DocumentVersion
 from aura.core.domain.extraction import Extraction
-from aura.core.domain.enums import DealStage, DocClass, Role, TransactionClass
+from aura.core.domain.enums import (DealStage, DocClass, Role, SegmentStatus,
+                                    TransactionClass)
 from aura.core.domain.guard import GuardEvaluation, StageGuard
 from aura.core.domain.handoff import Handoff, Task
-from aura.core.domain.job import Job
+from aura.core.domain.job import IdempotencyRecord, Job
 from aura.core.domain.mandate import Mandate
 from aura.core.domain.party import DealParty, Party
 from aura.core.domain.segment import Segment
@@ -32,8 +33,16 @@ class SegmentRepository(Protocol):
     def add(self, segment: Segment) -> Segment: ...
     def get(self, segment_id: int) -> Segment | None: ...
     def update(self, segment: Segment) -> Segment: ...
-    def claim_next_queued(self) -> Segment | None: ...
+    def claim_next_queued(self, worker_id: str = "worker",
+                          now: datetime | None = None) -> Segment | None:
+        """Atomically take the oldest queued segment whose not_before has passed: mark it
+        RUNNING, stamp the claim and count the attempt. Two claimers never get the same one."""
+        ...
     def list_for_job(self, job_id: int) -> list[Segment]: ...
+    def list_stale_running(self, claimed_before: datetime) -> list[Segment]:
+        """RUNNING segments whose claim is older than the cutoff (or was never stamped)."""
+        ...
+    def list_by_status(self, status: SegmentStatus) -> list[Segment]: ...
 
 
 @runtime_checkable
@@ -55,6 +64,10 @@ class HandoffRepository(Protocol):
     def list_overdue(self, now: datetime) -> list[Handoff]:
         """Open handoffs whose auto_escalate_at has passed."""
         ...
+    def mark_resolved(self, handoff: Handoff) -> bool:
+        """Conditional update: resolve only while still open or escalated. False when
+        someone else resolved it first (the caller answers 409)."""
+        ...
 
 
 @runtime_checkable
@@ -62,6 +75,21 @@ class AgentRunRepository(Protocol):
     def add(self, run: AgentRun) -> AgentRun: ...
     def get(self, run_id: int) -> AgentRun | None: ...
     def list_for(self, deal_id: int | None = None, limit: int = 200) -> list[AgentRun]: ...
+    def count_since(self, since: datetime) -> int:
+        """Model calls recorded since a moment (the daily budget)."""
+        ...
+    def link_task(self, segment_id: int, task_id: int) -> int:
+        """Point a segment's runs at the task its outcome created. Returns how many."""
+        ...
+
+
+@runtime_checkable
+class IdempotencyRepository(Protocol):
+    def get(self, key: str, username: str) -> IdempotencyRecord | None: ...
+    def add(self, record: IdempotencyRecord) -> IdempotencyRecord:
+        """Raises Conflict if (key, username) is already taken."""
+        ...
+    def delete(self, record_id: int) -> None: ...
 
 
 @runtime_checkable

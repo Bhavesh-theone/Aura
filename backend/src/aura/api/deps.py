@@ -13,9 +13,9 @@ from aura.core.services.notifying_audit import NotifyingAudit
 from aura.data.engine import SessionLocal
 from aura.data.filestore import LocalFileStore
 from aura.data.repositories.sql import (SqlAgentRunRepository, SqlAuditRepository,
-                                        SqlHandoffRepository, SqlJobRepository,
-                                        SqlSegmentRepository, SqlTaskRepository,
-                                        SqlUserRepository)
+                                        SqlHandoffRepository, SqlIdempotencyRepository,
+                                        SqlJobRepository, SqlSegmentRepository,
+                                        SqlTaskRepository, SqlUserRepository)
 from aura.data.repositories.sql_deals import (SqlConditionRepository, SqlDealRepository,
                                               SqlDiligenceRepository, SqlDocumentRepository,
                                               SqlExtractionRepository, SqlFindingRepository,
@@ -88,6 +88,12 @@ def get_jobs(s: Session = Depends(get_session),
 
 def get_segments(s: Session = Depends(get_session)) -> SqlSegmentRepository:
     return SqlSegmentRepository(s)
+
+
+def get_idempotency(s: Session = Depends(get_session)) -> SqlIdempotencyRepository:
+    """Per-user by construction: every lookup names the user."""
+    return SqlIdempotencyRepository(s)
+
 
 
 def get_tasks(s: Session = Depends(get_session),

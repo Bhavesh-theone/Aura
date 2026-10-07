@@ -110,6 +110,24 @@ class SegmentRow(Base):
     context_out: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Reliability (0011): the atomic claim, the attempt count, backoff and the last failure.
+    claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class IdempotencyKeyRow(Base):
+    """POST /api/jobs Idempotency-Key: one job per (key, user) for 24 hours."""
+    __tablename__ = "idempotency_key"
+    __table_args__ = (UniqueConstraint("key", "username", name="uq_idempotency_key_user"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(255))
+    username: Mapped[str] = mapped_column(String(64))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class AuditRow(Base):
@@ -437,6 +455,8 @@ class AgentRunRow(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     tool_calls: Mapped[list] = mapped_column(JSON, default=list)
+    segment_id: Mapped[int | None] = mapped_column(ForeignKey("segments.id"), nullable=True,
+                                                   index=True)
 
 
 class WallRow(Base):

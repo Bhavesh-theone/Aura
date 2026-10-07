@@ -4,7 +4,7 @@ import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from aura.agents.factory import make_orchestrator
+from aura.agents.factory import OrchestratorSelector
 from aura.api.errors import register_error_handlers
 from aura.api.routers import (activity, agent_runs, audit, auth, dashboard, deals, diligence,
                               documents, extractions, handoffs, jobs, metrics, parties,
@@ -54,7 +54,15 @@ def on_startup() -> None:
     seed()
     _check_audit_anchor()
     hub.bind_loop(asyncio.get_running_loop())
-    app.state.worker_stop = start_worker(make_orchestrator(), hub)
+    # The orchestrator is chosen per segment: the crew while Ollama answers, the stub (and
+    # an 'orchestrator_fallback' audit row) while it does not.
+    selector = OrchestratorSelector()
+    first = selector.select()
+    logging.getLogger(__name__).info(
+        "Orchestrator now: %s%s", type(first.orchestrator).__name__,
+        f" ({first.fallback_reason})" if first.fallback_reason else "")
+    app.state.worker_stop = start_worker(selector, hub)
+
 
 
 @app.get("/api/health")

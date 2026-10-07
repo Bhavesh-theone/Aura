@@ -153,7 +153,11 @@ def build_gate_package(action: ProposedAction, now: datetime,
     return {
         "what_happened": what_happened,
         "evidence": [{"type": "proposed_action", "tool": action.tool,
-                      "category": action.category.value, "arguments": action.arguments}],
+                      "category": action.category.value, "arguments": action.arguments},
+                     *([{"type": "additional_gated_attempts",
+                         "additional_gated_attempts": action.additional_gated_attempts}]
+                       if action.additional_gated_attempts else [])],
+
         "decision_required": {
             "question": f"Decide on the proposed action: {action.summary}"[:300],
             "options": options,

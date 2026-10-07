@@ -5,20 +5,24 @@ from aura.core.clock import utcnow
 from aura.core.domain.audit import AuditEntry
 from aura.core.domain.enums import (AssignmentMode, HandoffDirection, HandoffTrigger,
                                     JobStatus, SegmentStatus)
+from aura.core.domain.errors import HandoffRejected
 from aura.core.domain.extraction import CONFIDENCE_GATE
 from aura.core.domain.handoff import Handoff
 from aura.core.domain.segment import ProposedAction
 from aura.core.policy.gate_policy import (DEFAULT_MATERIALITY_CAP_INR, classify,
                                           exceeds_materiality, requires_approval)
 from aura.core.policy.handoff_policy import APPROVING_DECISIONS, build_gate_package
+from aura.core.policy.retry_policy import RetryPolicy
 from aura.core.ports.events import EventPublisher
 from aura.core.ports.orchestrator import AgentRunSink, Orchestrator, RunContext
-from aura.core.ports.repositories import (AuditRepository, DocumentRepository,
-                                          ExtractionRepository, HandoffRepository,
-                                          JobRepository, SegmentRepository, TaskRepository)
+from aura.core.ports.repositories import (AgentRunRepository, AuditRepository,
+                                          DocumentRepository, ExtractionRepository,
+                                          HandoffRepository, JobRepository, SegmentRepository,
+                                          TaskRepository)
 from aura.core.ports.uow import UnitOfWork
 from aura.core.services.extractions import record_extraction
 from aura.core.services.handoffs import continue_job, create_handoff
+from aura.core.services.segment_reliability import handle_segment_failure
 
 CONFIDENCE_THRESHOLD = CONFIDENCE_GATE
 
@@ -71,11 +75,18 @@ def run_segment(
     materiality_cap_inr: int = DEFAULT_MATERIALITY_CAP_INR,
     extractions: ExtractionRepository | None = None,
     documents: DocumentRepository | None = None,
-) -> None:
+    retry_policy: RetryPolicy | None = None,
+    run_links: AgentRunRepository | None = None,
+) -> str:
     """Run one segment to completion or to a gate. Never blocks on a human.
 
     Two transactions: the RUNNING mark commits first so progress is visible while the model
     works; everything the outcome writes (segment, job, task, handoff, audit) commits as one.
+
+    A failure rolls the outcome back and is then classified (retry_policy): a transient one
+    requeues the segment with backoff or, out of attempts, dead-letters it; anything else
+    fails it. A HandoffRejected keeps its 'handoff_rejected' audit row before failing.
+    Returns 'done', 'awaiting_approval', 'retry', 'dead_letter' or 'failed'.
     """
     segment = segments.get(segment_id)
     if segment is None:
@@ -92,7 +103,8 @@ def run_segment(
     uow.commit()
 
     run_context = RunContext(job_id=job.id, deal_id=job.deal_id, task_id=None, runs=runs,
-                             username=job.created_by)
+                             username=job.created_by, segment_id=segment.id)
+    outcome = "done"
     try:
         result = orchestrator.run(segment.context_in, run_context)
         ended = utcnow()
@@ -128,7 +140,7 @@ def run_segment(
                              "approved": decision in APPROVING_DECISIONS}))
                 continue_job(job.id, decision in APPROVING_DECISIONS, jobs, segments)
             else:
-                create_handoff(
+                handoff = create_handoff(
                     deal_id=job.deal_id, job_id=job.id, task_type=action.tool,
                     assignment_mode=AssignmentMode.HUMAN_REQUIRED,
                     direction=HandoffDirection.BOT_TO_HUMAN,
@@ -136,8 +148,11 @@ def run_segment(
                     context_package=build_gate_package(action, ended, materiality_cap_inr),
                     directive=None, materiality_inr=action.materiality_inr, actor="system",
                     tasks=tasks, handoffs=handoffs, audit=audit, events=events, now=ended)
+                if run_links is not None:  # the segment's model runs now belong to a task
+                    run_links.link_task(segment.id, handoff.task_id)
                 job.status = JobStatus.AWAITING_APPROVAL
                 jobs.update(job)
+            outcome = "awaiting_approval"
         else:
             segment.status = SegmentStatus.DONE
             segments.update(segment)
@@ -149,16 +164,14 @@ def run_segment(
                                     payload={"segment_id": segment.id}, created_at=ended))
             events.publish("job_complete", {"job_id": job.id, "deal_id": job.deal_id})
     except Exception as exc:
-        # Nothing the failed attempt wrote may survive; then record the failure itself.
-        uow.rollback()
-        segment.status = SegmentStatus.FAILED
-        segment.ended_at = utcnow()
-        segments.update(segment)
-        job.status = JobStatus.FAILED
-        jobs.update(job)
-        audit.append(AuditEntry(id=None, job_id=job.id, deal_id=job.deal_id, actor="system",
-                                action="segment_failed",
-                                payload={"segment_id": segment.id, "error": str(exc)},
-                                created_at=utcnow()))
-        events.publish("job_failed", {"job_id": job.id, "deal_id": job.deal_id})
+        if isinstance(exc, HandoffRejected):
+            # The refusal's audit row is the point (persist_writes): keep it, then fail.
+            uow.commit()
+        else:
+            # Nothing the failed attempt wrote may survive; then record the failure itself.
+            uow.rollback()
+        outcome = handle_segment_failure(segment, job, exc, retry_policy or RetryPolicy(),
+                                         segments, jobs, audit, events, utcnow())
     uow.commit()
+    return outcome
+

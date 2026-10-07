@@ -142,7 +142,9 @@ def test_a_gated_tool_call_makes_the_segment_propose_the_action_and_pause(monkey
     assert result.proposed_action.tool == "send_email"
     assert result.proposed_action.category is ActionCategory.OUTBOUND
     assert result.proposed_action.summary == "Introduce us to Ravi"
-    assert result.context_out["approved_draft"] is True
+    assert result.context_out["resume_after_approval"] is True
+    assert "approved_draft" not in result.context_out
+
     assert [c[0] for c in spies.calls] == ["get_deal_status"]  # the read ran, the send did not
 
 
@@ -191,3 +193,40 @@ def test_run_segment_turns_the_intercepted_call_into_a_task_and_handoff(monkeypa
     assert w.jobs.get(w.job.id).status.value == "awaiting_approval"
     assert w.segments.get(w.seg.id).status.value == "awaiting_approval"
     assert handoff.context_package["proposed_action"]["arguments"]["to"] == "ravi@example.com"
+
+def test_gated_attempts_in_a_draft_email_job_are_surfaced_as_evidence(monkeypatch):
+    from datetime import datetime, timezone
+
+    from aura.core.policy.handoff_policy import build_gate_package, validate_bot_to_human
+    spies = Spies()
+    orchestrator = _orchestrator(monkeypatch, spies, [
+        ("send_email", {"to": "x", "subject": "s", "body": "b"})])
+    context = {"deal": {"name": "Sunrise", "stage": "ORIGINATED"},
+               "party": {"id": 1, "display_name": "Ravi", "role": "buyer"}}
+    action = orchestrator._draft_email(None, context, "asha").proposed_action
+    assert action.additional_gated_attempts == [
+        {"tool": "send_email", "category": "outbound",
+         "arguments": {"to": "x", "subject": "s", "body": "b"}, "materiality_inr": None}]
+    package = build_gate_package(action, datetime(2026, 10, 7, tzinfo=timezone.utc))
+    validate_bot_to_human(package)
+    extra = [e for e in package["evidence"] if e["type"] == "additional_gated_attempts"]
+    assert extra[0]["additional_gated_attempts"][0]["tool"] == "send_email"
+
+
+def test_a_second_gated_attempt_in_a_brief_rides_along_with_the_first(monkeypatch):
+    spies = Spies()
+    orchestrator = _orchestrator(monkeypatch, spies, [
+        ("send_email", {"to": "a", "subject": "s", "body": "b"}),
+        ("wire_transfer", {"amount_inr": 5})])
+    action = orchestrator._brief(None, {"brief": "x"}, "asha").proposed_action
+    assert action.tool == "send_email"
+    assert [a["tool"] for a in action.additional_gated_attempts] == ["wire_transfer"]
+
+
+def test_a_context_queued_before_the_marker_rename_still_resumes():
+    from aura.core.ports.orchestrator import RunContext
+    from tests.unit.fakes import FakeRunSink
+    for marker in ("approved_draft", "resume_after_approval"):
+        result = CrewOrchestrator().run({marker: True, "brief": "x"},
+                                        RunContext(1, 2, None, FakeRunSink()))
+        assert result.completed and result.context_out["sent"] is True

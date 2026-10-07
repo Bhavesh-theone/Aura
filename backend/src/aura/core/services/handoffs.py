@@ -1,4 +1,5 @@
 """Tasks and handoffs (SOSPE section 6.12 and 9.5): where agents hand decisions to humans."""
+from dataclasses import replace
 from datetime import datetime
 
 
@@ -178,6 +179,16 @@ def resolve_handoff(
                                          "stage": "resolve"}))
         raise HandoffRejected(str(exc)) from None
 
+    # Claim the resolution before anything else changes: a conditional update that only
+    # matches an open or escalated handoff, so of two concurrent resolves one loses (409).
+    resolved = replace(handoff, directive=directive, status=HandoffStatus.RESOLVED,
+                       resolved_by=actor, resolved_at=now)
+    if not handoffs.mark_resolved(resolved):
+        raise Conflict(f"Handoff {handoff_id} is already resolved")
+    handoff.directive, handoff.status = directive, HandoffStatus.RESOLVED
+    handoff.resolved_by, handoff.resolved_at = actor, now
+
+
     task = tasks.get(handoff.task_id)
     approved = decision in APPROVING_DECISIONS
     if task.task_type == "classify_document":
@@ -189,10 +200,8 @@ def resolve_handoff(
 
     task.status = TaskStatus.DONE if approved else TaskStatus.CANCELLED
     tasks.update(task)
-    handoff.directive = directive
-    handoff.status = HandoffStatus.RESOLVED
-    handoff.resolved_by, handoff.resolved_at = actor, now
     handoffs.update(handoff)
+
 
     audit.append(AuditEntry(id=None, job_id=task.job_id, deal_id=handoff.deal_id, actor=actor,
                             action="handoff_resolved", created_at=now,

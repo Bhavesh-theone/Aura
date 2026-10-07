@@ -26,6 +26,8 @@ class SegmentStatus(str, Enum):
     AWAITING_APPROVAL = "awaiting_approval"
     DONE = "done"
     FAILED = "failed"
+    # Transient failures retried up to segment_max_attempts: parked for a person to retry.
+    DEAD_LETTER = "dead_letter"
 
 
 class Role(str, Enum):

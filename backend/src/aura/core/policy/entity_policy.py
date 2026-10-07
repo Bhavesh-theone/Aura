@@ -17,7 +17,11 @@ _KIND_FOR_ACTION: dict[str, str] = {
     "handoff_created": "handoff", "handoff_resolved": "handoff",
     "handoff_escalated": "handoff", "handoff_skipped_per_directive": "handoff",
     "job_submitted": "job", "job_completed": "job", "segment_failed": "job",
+    "segment_retry_scheduled": "job", "segment_dead_lettered": "job",
+    "segment_recovered": "job", "segment_retried": "job", "budget_deferred": "job",
+    "orchestrator_fallback": "job",
 }
+
 
 
 def entity_kind_for(action: str) -> str | None:

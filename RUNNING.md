@@ -84,8 +84,10 @@ uv run uvicorn aura.api.main:app --reload --port 8000
 
 Watch the startup log for the orchestrator line:
 
-- `Orchestrator: CrewAI on http://localhost:11434` — the real agent crew is live.
-- `Orchestrator: StubOrchestrator (Ollama unreachable...)` — Ollama isn't running. The portal still works and the handoff loop still runs; you just get deterministic canned output instead of model output. The stub still writes `agent_run` rows (model `stub`).
+- `Orchestrator now: CrewOrchestrator` — the real agent crew is live.
+- `Orchestrator now: StubOrchestrator (Ollama unreachable at ...)` — Ollama isn't running. The portal still works and the handoff loop still runs; you just get deterministic canned output instead of model output. The stub still writes `agent_run` rows (model `stub`).
+
+The choice is made **per segment**, not once at startup: the worker re-checks Ollama at most every 30 s (`AURA_ORCHESTRATOR_HEALTH_TTL_SECONDS`). Start or stop Ollama while the backend runs and the next segment follows. Each segment that runs on the stub because Ollama is down is audited as `orchestrator_fallback`.
 
 Verify: [http://localhost:8000/api/health](http://localhost:8000/api/health) returns `{"status":"ok"}`
 API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
@@ -202,7 +204,42 @@ An extraction is stored with `feeds_valuation: false`. Below 0.95 confidence it 
 
 **do_not_revisit.** When a resolved handoff on a deal has `new_constraints.do_not_revisit` listing a task type, a later proposal of that task type on the same deal creates no handoff: the earlier decision is applied to the job (approve continues it, anything else ends it) and `handoff_skipped_per_directive` is audited.
 
-Every model call (and every stub run) is recorded in `agent_run`, readable at `GET /api/agent-runs?deal_id=` (model, prompt template, prompt hash, latency, tokens, confidence). If a run cannot be recorded, its output is thrown away and the segment fails.
+Every model call (and every stub run) is recorded in `agent_run`, readable at `GET /api/agent-runs?deal_id=` (model, prompt template, prompt hash, latency, tokens, confidence). Each row carries its `segment_id`; once the segment's gate creates a task, its rows also get that `task_id`. If a run cannot be recorded, its output is thrown away and the segment fails.
+
+Gated tool calls the crew attempts on the way (for example `send_email` during a `draft_email` job) are not dropped: they appear in the handoff's `evidence` as `{"type": "additional_gated_attempts", ...}`. None of them ran.
+
+### Retries, dead letters and recovery
+
+The worker claims a segment with one atomic `UPDATE ... WHERE status = 'queued'`, so two workers can never run the same segment. Each claim stamps `claimed_by`, `claimed_at` and counts an attempt.
+
+- **Transient failure** (Ollama refused the connection, a timeout, a 5xx from the model): the segment goes back to `queued` with `not_before` set by exponential backoff (10 s, 20 s, 40 s ...), audited `segment_retry_scheduled`. After `AURA_SEGMENT_MAX_ATTEMPTS` (3) attempts it becomes **`dead_letter`**: the job is `failed`, `last_error` says why, `segment_dead_lettered` is audited and sent over the WebSocket.
+- **Permanent failure** (bad model output that fails validation, a run that could not be recorded, a policy refusal, a used-up budget): the segment fails at once with `last_error`, audited `segment_failed` (`"permanent": true`). A refused handoff package keeps its `handoff_rejected` audit row before the segment fails.
+- **Inside a segment**, each model call is retried up to `AURA_LLM_MAX_RETRIES` (2) times on a transient error (1 s then 2 s, `AURA_LLM_RETRY_BACKOFF_SECONDS`). Every attempt is its own `agent_run` row with the error, so lineage stays complete.
+- **Crash recovery.** A segment left `running` by a crash is found by the sweep that runs at startup and before every claim: once its claim is older than `AURA_SEGMENT_LEASE_SECONDS` (900 s) it is requeued (`segment_recovered`), or dead-lettered if it has no attempts left. Its job's status follows.
+- **Budgets.** A segment may make `AURA_MAX_LLM_CALLS_PER_SEGMENT` (12) model calls and run `AURA_MAX_SEGMENT_SECONDS` (600 s); going over fails it (`last_error` names the limit). Across all segments, once `AURA_MAX_LLM_CALLS_PER_DAY` (2000) `agent_run` rows exist since 00:00 UTC, newly claimed segments are deferred to the next UTC day (`not_before`, audited `budget_deferred`).
+
+```bash
+# Dead-lettered jobs on deals you can see (dealmaker or analyst)
+curl -s localhost:8000/api/jobs/dead-letter -H "Authorization: Bearer $TOKEN"
+# Send one round again: its last segment is queued with a fresh attempt count (202; 409 if nothing to retry)
+curl -s -X POST localhost:8000/api/jobs/42/retry -H "Authorization: Bearer $TOKEN"
+```
+
+**Idempotent submit.** `POST /api/jobs` takes an optional `Idempotency-Key` header (1-255 characters). The same key with the same body within 24 hours returns the original job with **200** and `Idempotent-Replayed: true` instead of creating another; the same key with a different body is **409**. Keys are per user. Without the header nothing changes (202, a new job each time).
+
+| Setting (env) | Default | Meaning |
+| --- | --- | --- |
+| `AURA_SEGMENT_LEASE_SECONDS` | 900 | A running segment's claim older than this is treated as orphaned |
+| `AURA_SEGMENT_MAX_ATTEMPTS` | 3 | Claims before a transient failure dead-letters the segment |
+| `AURA_SEGMENT_BACKOFF_SECONDS` | 10 | Base backoff between segment attempts (doubles each time) |
+| `AURA_LLM_MAX_RETRIES` | 2 | Retries of one model call on a transient error |
+| `AURA_LLM_RETRY_BACKOFF_SECONDS` | 1 | Base backoff between model-call retries |
+| `AURA_MAX_LLM_CALLS_PER_SEGMENT` | 12 | Model calls one segment may make |
+| `AURA_MAX_SEGMENT_SECONDS` | 600 | Wall-clock time one segment may run |
+| `AURA_MAX_LLM_CALLS_PER_DAY` | 2000 | Model calls per UTC day before new segments wait for tomorrow |
+| `AURA_ORCHESTRATOR_HEALTH_TTL_SECONDS` | 30 | How long an Ollama health check is trusted |
+
+Schema for all of this is migration `0011_harness_reliability` (applied by `alembic upgrade head` on the next backend start; its downgrade turns `dead_letter` segments into `failed`).
 
 ### API additions
 
@@ -214,7 +251,11 @@ Every model call (and every stub run) is recorded in `agent_run`, readable at `G
 | `POST /api/handoffs/{id}/resolve` | Dealmaker, or compliance for `policy_required` (403 otherwise). Body is the directive. 409 if already resolved |
 | `GET /api/agent-runs?deal_id=`, `GET /api/agent-runs/{id}` | Model run lineage; the detail view includes the exact prompt and output |
 | `GET /api/dashboard/summary` | `open_deals, closed_deals, ended_deals, deals_by_class, deals_by_stage, decisions_waiting, blockers_open, recent_activity` (last 10). `deals_by_stage` counts **every** deal, closed and ended included; `open_deals`, `deals_by_class` and `blockers_open` count open deals (a blocker on a closed or ended deal is no longer open work) |
-| `GET /api/metrics` | `stage_dwell: [{stage, n, median_hours, p90_hours}]` (from `deal_stage_history` only; completed stays) and `success: {guarded_forward_transitions_pct, runs_traceable_pct, audit_chain_ok, handoff_rejections_422, outbound_executed, deals_closed_end_to_end}`. Wall-filtered. SM1 is defined over **forward** moves: regressions and exits carry a reason code instead of guards |
+| `GET /api/metrics` | `stage_dwell: [{stage, n, median_hours, p90_hours}]` (from `deal_stage_history` only; completed stays), `success: {guarded_forward_transitions_pct, runs_traceable_pct, audit_chain_ok, handoff_rejections_422, outbound_executed, deals_closed_end_to_end}` and `reliability: {dead_lettered_segments, retried_segments, recovered_segments, fallback_runs, budget_deferrals}` (counted from the audit trail). Wall-filtered. SM1 is defined over **forward** moves: regressions and exits carry a reason code instead of guards |
+| `POST /api/jobs` + `Idempotency-Key` header | Optional. Same key and body within 24 h: the original job, 200, `Idempotent-Replayed: true`. Same key, different body: 409 |
+| `GET /api/jobs/dead-letter` | Dealmaker or analyst (403 otherwise), wall-filtered. `[{job: {...job}, segment_id, seq, status: "dead_letter", attempts, last_error, claimed_by, ended_at}]` |
+| `POST /api/jobs/{id}/retry` | Dealmaker or analyst. Requeues the job's dead-lettered or failed last segment (audited `segment_retried`); 202 with the job, 404 off-wall, 409 if there is nothing to retry |
+
 | `GET/POST/DELETE /api/deals/{id}/members` | Wall membership. POST and DELETE are compliance only, take `{"username": ...}`, and are audited |
 | `GET /api/users`, `POST /api/users`, `PATCH /api/users/{id}` | Admin only (see above) |
 | `GET/PATCH /api/documents/{id}`, `GET /api/documents/{id}/versions`, `GET .../download` | Metadata (logs a `view`), set `{is_executed?, doc_class?}` (setting a class confirms it), version list, download (logs a `download`). Listing a deal's documents is not logged. Uploading the same filename to a deal adds a version (`current_version`) instead of a new document |

@@ -24,3 +24,5 @@ class AgentRun:
     started_at: datetime
     completed_at: datetime
     tool_calls: list = field(default_factory=list)
+    # The segment the run belonged to (lineage even before a task exists).
+    segment_id: int | None = None

@@ -3,6 +3,13 @@
 RunRecorder is the single place a row is built. Both orchestrators go through it, so there
 is no inference path that skips the record. If the row cannot be written, AgentRunLogError is
 raised and the output never reaches the caller.
+
+It is also where the per-segment harness limits live (one recorder per segment run):
+- a transient model error (connection refused, timeout, 5xx) is retried up to
+  llm_max_retries times with backoff; every attempt is its own agent_run row, so lineage
+  shows the failures too;
+- more than max_llm_calls_per_segment calls, or a segment running past
+  max_segment_seconds, raises BudgetExceeded (permanent: the segment fails).
 """
 import time
 from datetime import datetime
@@ -13,7 +20,8 @@ from aura.core.clock import utcnow
 from aura.agents.llm.repair import extract_json
 from aura.core.domain.agent_run import AgentRun
 from aura.core.policy.lineage_policy import canonical, prompt_hash  # noqa: F401
-from aura.core.ports.orchestrator import AgentRunLogError, RunContext
+from aura.core.policy.retry_policy import is_transient
+from aura.core.ports.orchestrator import AgentRunLogError, BudgetExceeded, RunContext
 
 
 def normalise_messages(messages: Any) -> list[dict]:
@@ -37,9 +45,32 @@ def _tool_calls(parsed: dict | None) -> list[dict]:
 
 
 class RunRecorder:
-    def __init__(self, context: RunContext, model_id: str, model_version: str):
+    def __init__(self, context: RunContext, model_id: str, model_version: str, *,
+                 max_retries: int | None = None, retry_backoff_seconds: float | None = None,
+                 max_calls: int | None = None, max_seconds: float | None = None,
+                 sleep: Callable[[float], None] = time.sleep):
+        from aura.config import get_settings
+        s = get_settings()
         self.context, self.model_id, self.model_version = context, model_id, model_version
         self.last_run_id: int | None = None
+        self.max_retries = s.llm_max_retries if max_retries is None else max_retries
+        self.retry_backoff = s.llm_retry_backoff_seconds if retry_backoff_seconds is None \
+            else retry_backoff_seconds
+        self.max_calls = s.max_llm_calls_per_segment if max_calls is None else max_calls
+        self.max_seconds = s.max_segment_seconds if max_seconds is None else max_seconds
+        self._sleep = sleep
+        self._started = time.monotonic()
+        self.calls = 0
+
+    def check_budget(self) -> None:
+        """Raise BudgetExceeded before a call that would break the segment's limits."""
+        if self.calls >= self.max_calls:
+            raise BudgetExceeded(f"segment budget exceeded: more than {self.max_calls} model "
+                                 "calls (max_llm_calls_per_segment)")
+        elapsed = time.monotonic() - self._started
+        if elapsed > self.max_seconds:
+            raise BudgetExceeded(f"segment budget exceeded: ran {int(elapsed)} s, over "
+                                 f"{self.max_seconds} s (max_segment_seconds)")
 
     def record(self, *, archetype: str, template_id: str, messages: list[dict],
                output_text: str, started_at: datetime, completed_at: datetime,
@@ -58,7 +89,8 @@ class RunRecorder:
             confidence=confidence if confidence is not None else _confidence(parsed),
             tokens_in=tokens_in, tokens_out=tokens_out, cost_inr=0.0, latency_ms=latency_ms,
             started_at=started_at, completed_at=completed_at,
-            tool_calls=tool_calls if tool_calls is not None else _tool_calls(parsed))
+            tool_calls=tool_calls if tool_calls is not None else _tool_calls(parsed),
+            segment_id=self.context.segment_id)
         try:
             saved = self.context.runs.record(run)
             self.last_run_id = saved.id
@@ -70,22 +102,32 @@ class RunRecorder:
 
     def traced(self, call: Callable[[], Any], *, archetype: str, template_id: str,
                messages: list[dict], usage: Callable[[], tuple[int, int]] = lambda: (0, 0)):
-        """Run `call`, record it, and only then hand back its result."""
-        started = utcnow()
-        clock = time.perf_counter()
-        in_before, out_before = usage()
-        try:
-            result = call()
-        except Exception as exc:
-            try:  # a failed call is still a call; but the original error is what matters
-                self.record(archetype=archetype, template_id=template_id, messages=messages,
-                            output_text="", started_at=started,
-                            completed_at=utcnow(),
-                            latency_ms=int((time.perf_counter() - clock) * 1000),
-                            error=f"{type(exc).__name__}: {exc}")
-            except AgentRunLogError:
-                pass
-            raise
+        """Run `call`, record it, and only then hand back its result. A transient failure
+        is recorded and retried (with backoff) up to max_retries times."""
+        attempt = 0
+        while True:
+            self.check_budget()
+            self.calls += 1
+            started = utcnow()
+            clock = time.perf_counter()
+            in_before, out_before = usage()
+            try:
+                result = call()
+                break
+            except Exception as exc:
+                try:  # a failed call is still a call; but the original error is what matters
+                    self.record(archetype=archetype, template_id=template_id,
+                                messages=messages, output_text="", started_at=started,
+                                completed_at=utcnow(),
+                                latency_ms=int((time.perf_counter() - clock) * 1000),
+                                error=f"{type(exc).__name__}: {exc}")
+                except AgentRunLogError:
+                    pass
+                if attempt >= self.max_retries or not is_transient(exc):
+                    raise
+                self._sleep(self.retry_backoff * 2 ** attempt)
+                attempt += 1
+
         in_after, out_after = usage()
         text = result if isinstance(result, str) else str(result)
         self.record(archetype=archetype, template_id=template_id, messages=messages,

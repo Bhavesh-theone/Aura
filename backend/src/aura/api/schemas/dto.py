@@ -34,7 +34,20 @@ class JobResponse(BaseModel):
     created_by: str | None = None
 
 
+class DeadLetterResponse(BaseModel):
+    """A job whose segment ran out of retries. POST /api/jobs/{job_id}/retry queues it again."""
+    job: JobResponse
+    segment_id: int
+    seq: int
+    status: str
+    attempts: int
+    last_error: str | None
+    claimed_by: str | None
+    ended_at: datetime | None
+
+
 class AuditResponse(BaseModel):
+
     id: int
     job_id: int | None
     deal_id: int | None = None

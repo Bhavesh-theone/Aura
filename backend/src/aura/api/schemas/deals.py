@@ -291,6 +291,16 @@ class SuccessMetricsOut(BaseModel):
     deals_closed_end_to_end: int
 
 
+class ReliabilityMetricsOut(BaseModel):
+    dead_lettered_segments: int
+    retried_segments: int
+    recovered_segments: int
+    fallback_runs: int
+    budget_deferrals: int
+
+
 class MetricsOut(BaseModel):
     stage_dwell: list[StageDwellOut]
     success: SuccessMetricsOut
+    reliability: ReliabilityMetricsOut | None = None
+

@@ -44,14 +44,26 @@ class FakeSegmentRepo:
         self.items[segment.id] = segment
         return segment
 
-    def claim_next_queued(self) -> Segment | None:
+    def claim_next_queued(self, worker_id: str = "worker", now=None) -> Segment | None:
         for seg in self.items.values():
-            if seg.status is SegmentStatus.QUEUED:
+            if seg.status is SegmentStatus.QUEUED and (
+                    seg.not_before is None or now is None or seg.not_before <= now):
+                seg.status, seg.claimed_by, seg.claimed_at = (SegmentStatus.RUNNING,
+                                                             worker_id, now)
+                seg.attempts += 1
                 return seg
         return None
 
     def list_for_job(self, job_id: int) -> list[Segment]:
         return [s for s in self.items.values() if s.job_id == job_id]
+
+    def list_stale_running(self, claimed_before):
+        return [s for s in self.items.values() if s.status is SegmentStatus.RUNNING
+                and (s.claimed_at is None or s.claimed_at < claimed_before)]
+
+    def list_by_status(self, status):
+        return [s for s in self.items.values() if s.status is status]
+
 
 
 class FakeAuditRepo:
@@ -212,6 +224,17 @@ class FakeHandoffRepo:
         from aura.core.domain.enums import HandoffStatus
         return [h for h in self.items.values() if h.status is HandoffStatus.OPEN
                 and h.auto_escalate_at is not None and h.auto_escalate_at <= now]
+
+    def mark_resolved(self, handoff):
+        from aura.core.domain.enums import HandoffStatus
+        current = self.items.get(handoff.id)
+        if current is None or current.status not in (HandoffStatus.OPEN,
+                                                     HandoffStatus.ESCALATED):
+            return False
+        # in place, like a row: callers holding the earlier object see the resolution
+        current.__dict__.update(handoff.__dict__)
+        return True
+
 
     def open_ones(self):
         return self.list_all(resolved=False)
