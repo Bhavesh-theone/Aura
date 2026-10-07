@@ -265,6 +265,8 @@ Aura/
 - [RUNNING.md](RUNNING.md) — full operating guide: setup, roles and permissions, API reference, agents, migrations, troubleshooting.
 - [docs/PRD-v1.md](docs/PRD-v1.md) — what v1 builds and why, scoped from the SOSPE master specification.
 - [docs/PRD-v1-conformance.md](docs/PRD-v1-conformance.md) — requirement-by-requirement status, plus the end-to-end run log.
+- [docs/agentic-harness.md](docs/agentic-harness.md) — agent loop mapped to the 13 agentic-harness categories, with an interactive [architecture diagram](docs/architecture/agentic-harness.html), coverage scorecard and fixes.
+- [docs/market-research.md](docs/market-research.md) — comparable real-world platforms, capability matrix, 65-feature benchmark and PRD-v2 candidates.
 
 ## Status and limitations
 
