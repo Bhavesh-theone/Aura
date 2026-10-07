@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Bot, Briefcase, Inbox, LayoutGrid, UserCog, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Bot, Gauge, Briefcase, Inbox, LayoutGrid, UserCog, type LucideIcon } from "lucide-react";
 
 export type NavItem = {
   href: string;
@@ -17,6 +17,7 @@ export const navItems: NavItem[] = [
   { href: "/activity", label: "Activity", shortcut: "g l", Icon: Activity, group: "primary" },
   { href: "/metrics", label: "Metrics", shortcut: "g m", Icon: BarChart3, group: "primary" },
   { href: "/jobs", label: "Agent jobs", shortcut: "g j", Icon: Bot, group: "automation" },
+  { href: "/quality", label: "Agent quality", shortcut: "g q", Icon: Gauge, group: "automation" },
   { href: "/admin/users", label: "Users", shortcut: "g u", Icon: UserCog, group: "admin", roles: ["admin"] },
 ];
 
@@ -28,9 +29,12 @@ export function chordRoutesFor(role: string | undefined): Record<string, string>
 }
 
 export function isActive(href: string, pathname: string) {
-  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+  // A trace belongs to an agent job, so the sidebar keeps "Agent jobs" lit.
+  const path = pathname.startsWith("/traces") ? "/jobs" : pathname;
+  return href === "/" ? path === "/" : path.startsWith(href);
 }
 
 export function sectionForPath(pathname: string): NavItem {
-  return navItems.filter((i) => i.href !== "/").find((i) => pathname.startsWith(i.href)) ?? navItems[0];
+  const path = pathname.startsWith("/traces") ? "/jobs" : pathname;
+  return navItems.filter((i) => i.href !== "/").find((i) => path.startsWith(i.href)) ?? navItems[0];
 }

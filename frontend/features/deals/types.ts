@@ -145,6 +145,8 @@ export type AgentRun = {
   started_at: string;
   completed_at: string;
   tool_calls: unknown[];
+  trace_id?: string | null;
+  span_id?: string | null;
 };
 
 export type AgentRunMessage = { role: string; content: unknown };
@@ -232,3 +234,5 @@ export type Member = { username: string; added_at: string };
 export type Signoff = { id: number; deal_id: number; signed_by: string; note: string; signed_at: string };
 
 export const isTerminal = (s: string) => (TERMINAL_STAGES as readonly string[]).includes(s);
+
+export type DealNote = { id: number; deal_id: number; body: string; author: string; source: string; job_id: number | null; created_at: string };

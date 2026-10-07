@@ -15,7 +15,8 @@ def _out(r) -> AgentRunOut:
         prompt_template_id=r.prompt_template_id, prompt_hash=r.prompt_hash,
         confidence=r.confidence, tokens_in=r.tokens_in, tokens_out=r.tokens_out,
         cost_inr=r.cost_inr, latency_ms=r.latency_ms, started_at=r.started_at,
-        completed_at=r.completed_at, tool_calls=r.tool_calls)
+        completed_at=r.completed_at, tool_calls=r.tool_calls, trace_id=r.trace_id,
+        span_id=r.span_id)
 
 
 @router.get("", response_model=list[AgentRunOut])

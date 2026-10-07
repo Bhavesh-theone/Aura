@@ -24,6 +24,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The portal reads these: the 429 countdown and the idempotent-replay notice.
+    expose_headers=["Retry-After", "Idempotent-Replayed"],
 )
 
 app.include_router(auth.router)

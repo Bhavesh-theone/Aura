@@ -2,29 +2,46 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { cx, formatDateTime, humanize, shortAgo, titleCase } from "@/shared/lib/format";
-import { Badge, type Tone } from "@/shared/ui/primitives";
+import { Plus, TriangleAlert } from "lucide-react";
+import { Badge, Button, Tip } from "@/shared/ui/primitives";
 import { EmptyState, InlineError, Skel } from "@/shared/ui/States";
 import { useActivity } from "@/features/activity/hooks";
 import { verbFor } from "@/features/activity/present";
+import { useAuth } from "@/features/auth/hooks";
+import { useCan } from "@/features/auth/useCan";
+import { TraceLink } from "@/features/traces/components/TraceLink";
 import { useJobs } from "../hooks";
+import { DeadLetters } from "./DeadLetters";
 import { JobTimeline } from "./JobTimeline";
+import { fmtSecs, statusView, useCountdown } from "./present";
+import { SubmitJob } from "./SubmitJob";
 import type { Job, JobSegment } from "../types";
 import type { ActivityEntry } from "@/features/activity/types";
 
 const failedActions = new Set(["segment_failed"]);
 
-export const jobTone = (s: string): Tone =>
-  s === "complete" ? "success" : s === "failed" || s === "rejected" ? "danger" : s === "awaiting_approval" ? "warning" : s === "running" ? "accent" : s === "pending" ? "info" : "neutral";
+function RetryNote({ job }: { job: Job }) {
+  const secs = useCountdown(job.phase === "retrying" ? job.next_attempt_at : null);
+  return secs > 0 ? <span className="num font-mono">next attempt in {fmtSecs(secs)}</span> : null;
+}
 
-const STATUS_LABEL: Record<string, string> = {
-  pending: "Queued",
-  running: "Running",
-  awaiting_approval: "Awaiting decision",
-  complete: "Complete",
-  failed: "Failed",
-  rejected: "Rejected",
-};
-const statusLabel = (s: string) => STATUS_LABEL[s] ?? humanize(s);
+function StatusBadge({ job }: { job: Job }) {
+  const v = statusView(job);
+  return <Badge tone={v.tone}>{v.label}</Badge>;
+}
+
+/** Truncated last_error for failed / retrying jobs, full text in a tooltip. */
+function ErrorLine({ job }: { job: Job }) {
+  if (!job.last_error || (job.status !== "failed" && job.phase !== "retrying" && job.phase !== "dead_letter")) return null;
+  return (
+    <Tip label={<span className="block max-w-[360px] whitespace-pre-wrap break-words">{job.last_error}</span>} side="bottom">
+      <p className="mt-1.5 flex cursor-default items-start gap-1 text-[11.5px] leading-snug text-danger">
+        <TriangleAlert className="mt-px h-3 w-3 shrink-0" />
+        <span className="line-clamp-2 font-mono">{job.last_error}</span>
+      </p>
+    </Tip>
+  );
+}
 
 /** The API does not embed a segment timeline on the job, so it is rebuilt from the job's audit rows. */
 function segmentsFromActivity(job: Job, activity: ActivityEntry[]): JobSegment[] {
@@ -32,7 +49,8 @@ function segmentsFromActivity(job: Job, activity: ActivityEntry[]): JobSegment[]
     .filter((e) => e.job_id === job.id)
     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
     .map((e) => {
-      const payload = e.payload;
+      // trace_id/span_id ride on every audit row written inside a span; the Trace link covers them.
+      const { trace_id: _t, span_id: _s, ...payload } = e.payload as Record<string, unknown>;
       const detail =
         typeof payload.error === "string" ? payload.error : Object.keys(payload).length > 0 ? JSON.stringify(payload) : null;
       const verb = verbFor(e.action, payload);
@@ -64,6 +82,11 @@ const preCls = "scroll overflow-x-auto rounded-md border border-line bg-well p-3
 export function JobsWorkspace() {
   const { jobs, loading, error, refresh } = useJobs();
   const { activity } = useActivity();
+  const can = useCan();
+  const { user } = useAuth();
+  const canRetry = user?.role === "dealmaker" || user?.role === "analyst";
+  const canSubmit = can("work");
+  const [showSubmit, setShowSubmit] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
   // Deep link from the activity feed: /jobs?job=12 (read once; no Suspense needed).
@@ -75,11 +98,13 @@ export function JobsWorkspace() {
   const ordered = useMemo(() => [...jobs].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)), [jobs]);
 
   useEffect(() => {
+    // Wait for the first load: clearing the selection on the initial empty list would drop
+    // the ?job= deep link before the jobs arrive.
+    if (loading) return;
     if (ordered.length === 0) {
       setSelectedId(null);
       return;
     }
-    if (loading) return;
     if (selectedId === null || !ordered.some((j) => j.id === selectedId)) setSelectedId(ordered[0].id);
   }, [ordered, selectedId, loading]);
 
@@ -94,7 +119,20 @@ export function JobsWorkspace() {
           <div className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-4">
             <h1 className="font-serif text-[20px] text-fg">Agent jobs</h1>
             <span className="num ml-auto text-[12px] text-muted">{active} active</span>
+            {canSubmit ? (
+              <Button size="sm" variant="secondary" onClick={() => setShowSubmit((v) => !v)} aria-expanded={showSubmit}>
+                <Plus className="h-3.5 w-3.5" /> New
+              </Button>
+            ) : null}
           </div>
+          {showSubmit && canSubmit ? (
+            <SubmitJob
+              onSubmitted={(id) => {
+                setSelectedId(id);
+                refresh();
+              }}
+            />
+          ) : null}
           <div className="scroll min-h-0 flex-1 overflow-y-auto">
             {error ? (
               <div className="p-4"><InlineError message={error} onRetry={refresh} /></div>
@@ -121,13 +159,15 @@ export function JobsWorkspace() {
                         {sel ? <span aria-hidden className="absolute inset-y-0 left-0 w-[2px] bg-accent" /> : null}
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-[11px] text-muted">JOB-{job.id}</span>
-                          <Badge tone={jobTone(job.status)} className="ml-auto">{statusLabel(job.status)}</Badge>
+                          <span className="ml-auto"><StatusBadge job={job} /></span>
                         </div>
                         <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-fg">{briefOf(job)}</p>
                         <p className="num mt-1.5 font-mono text-[11px] text-muted">
                           {job.deal_id ? `Deal #${job.deal_id} · ` : ""}
                           {shortAgo(job.created_at)}
+                          {job.attempts > 1 ? ` · ${job.attempts} attempts` : ""}
                         </p>
+                        <ErrorLine job={job} />
                       </button>
                     </li>
                   );
@@ -138,19 +178,33 @@ export function JobsWorkspace() {
         </section>
 
         <section className="scroll min-h-0 flex-1 overflow-y-auto">
+          {canRetry ? <DeadLetters onChanged={refresh} /> : null}
           {selected ? (
             <div className="a-fade mx-auto max-w-[760px] px-10 py-9">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[12px] text-muted">JOB-{selected.id}</span>
-                <Badge tone={jobTone(selected.status)}>{statusLabel(selected.status)}</Badge>
+                <StatusBadge job={selected} />
+                {selected.trace_id ? <span className="ml-auto"><TraceLink traceId={selected.trace_id} /></span> : null}
               </div>
               <h2 className="mt-3 font-serif text-[24px] leading-snug text-fg">{briefOf(selected)}</h2>
               <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[12px] text-muted">
                 <span className="num font-mono">Submitted {formatDateTime(selected.created_at)}</span>
                 <span>{selected.deal_id ? `Deal #${selected.deal_id}` : "No deal linked"}</span>
                 {selected.created_by ? <span>By {titleCase(selected.created_by)}</span> : null}
+                {selected.attempts > 0 ? <span className="num">{selected.attempts} attempt{selected.attempts === 1 ? "" : "s"}</span> : null}
+                <RetryNote job={selected} />
                 {typeof selected.inputs?.capability === "string" ? <span>{humanize(String(selected.inputs.capability))}</span> : null}
               </div>
+
+              {selected.phase === "deferred" ? (
+                <p className="mt-4 rounded-sm border border-line bg-well px-3 py-2 text-[13px] text-fg-2">
+                  The daily model budget is spent, so this job waits and will run on its own
+                  {selected.next_attempt_at ? ` after ${formatDateTime(selected.next_attempt_at)}` : ""}.
+                </p>
+              ) : null}
+              {selected.last_error && (selected.status === "failed" || selected.phase) ? (
+                <pre className={cx(preCls, "mt-4 whitespace-pre-wrap text-danger")}>{selected.last_error}</pre>
+              ) : null}
 
               <section className="mt-8">
                 <h3 className="mb-3 text-[12px] font-medium text-fg-2">Segment timeline</h3>

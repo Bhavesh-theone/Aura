@@ -89,6 +89,8 @@ Watch the startup log for the orchestrator line:
 
 The choice is made **per segment**, not once at startup: the worker re-checks Ollama at most every 30 s (`AURA_ORCHESTRATOR_HEALTH_TTL_SECONDS`). Start or stop Ollama while the backend runs and the next segment follows. Each segment that runs on the stub because Ollama is down is audited as `orchestrator_fallback`.
 
+**Thinking is off for the crew's model** (`AURA_OLLAMA_THINK=false`, the default). qwen3.5's reasoning mode on the 4B model often used the whole output budget and returned an empty answer ("Invalid response from LLM call - None or empty", a permanent failure) and was 5-10x slower. Set `AURA_OLLAMA_THINK=true` only to experiment. SQLite waits up to 30 s for another process's write lock, so an eval run can share the database with the API worker; a real-model eval on a copy of the database is still the safest way to avoid touching autonomy.
+
 Verify: [http://localhost:8000/api/health](http://localhost:8000/api/health) returns `{"status":"ok"}`
 API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
@@ -238,6 +240,7 @@ curl -s -X POST localhost:8000/api/jobs/42/retry -H "Authorization: Bearer $TOKE
 | `AURA_MAX_SEGMENT_SECONDS` | 600 | Wall-clock time one segment may run |
 | `AURA_MAX_LLM_CALLS_PER_DAY` | 2000 | Model calls per UTC day before new segments wait for tomorrow |
 | `AURA_ORCHESTRATOR_HEALTH_TTL_SECONDS` | 30 | How long an Ollama health check is trusted |
+| `AURA_OLLAMA_THINK` | false | Let the model reason before answering; off sends `reasoning_effort: none` |
 
 Schema for all of this is migration `0011_harness_reliability` (applied by `alembic upgrade head` on the next backend start; its downgrade turns `dead_letter` segments into `failed`).
 
@@ -308,6 +311,13 @@ The stub is a keyword baseline (filename and text phrases, `label: number` with 
 | `AURA_TRACING_ENABLED` | true | Record spans in `trace_span` |
 
 Schema: migration `0012_harness_eval_obs` (tables `eval_run`, `eval_case_result`, `capability_autonomy` seeded at level 2, `trace_span`, `deal_note`; `trace_id`/`span_id` on `jobs` and `agent_run`; handoff trigger `untrusted_content`). Its downgrade turns `untrusted_content` handoffs into `policy_required`.
+
+### Seeing it in the app and the API
+
+- **Partial eval runs.** `--cases ID,ID` (for example `--cases cls-015,cls-016`) scores just those golden cases; `--limit N` takes the first N. Both are stored with `metrics.partial = true`: they appear in the runs list and on **Agent quality**, but autonomy ignores them (they count for neither demotion nor promotion), so a spot check never changes a capability's level. Run the whole set to produce evidence.
+- **Job responses** (`POST /api/jobs`, `GET /api/jobs`, `GET /api/jobs/{id}`) carry `attempts`, `phase` (`retrying`, `deferred`, `dead_letter` or null), `next_attempt_at` and `last_error`, all read from the job's latest segment.
+- **Agent runs** (`GET /api/agent-runs`, `GET /api/agent-runs/{id}`) carry `trace_id` and `span_id`, the same ids as the job and its spans.
+- **Pages.** **Agent quality** (`/quality`) lists eval runs with per-case detail, override rates, each capability's autonomy level and the prompt registry. The **trace viewer** (`/traces/<trace_id>`, reached from a job or an agent run) draws the spans as a waterfall. **Agent jobs** has a dead-letter section with a retry button for each stuck job, and a badge on jobs that are retrying or deferred. **Decisions** styles `untrusted_content` handoffs apart and lists their evidence; a deal's **Notes** show what `add_internal_note` saved; **Metrics** gains reliability, evaluation and security sections.
 
 ### API additions
 

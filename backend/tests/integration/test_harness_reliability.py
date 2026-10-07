@@ -141,9 +141,14 @@ def test_a_model_that_stays_down_is_retried_then_dead_lettered(api, fast_retries
     deal = make_deal(api)
     job = submit(api, {"brief": "intro"}, deal_id=deal)
     events = Recorder()
-    for _ in range(3):
+    assert run_once(api.session, Refused(), events) is True
+    shown = api.call("GET", f"/api/jobs/{job['id']}").json()
+    assert (shown["phase"], shown["attempts"]) == ("retrying", 1)
+    assert "ConnectionRefusedError" in shown["last_error"]
+    for _ in range(2):
         assert run_once(api.session, Refused(), events) is True
     assert run_once(api.session, Refused(), events) is False  # nothing left to claim
+    assert api.call("GET", f"/api/jobs/{job['id']}").json()["phase"] == "dead_letter"
 
     status, attempts, last_error, _, _ = _segment(api, job["id"])
     assert (status, attempts) == ("dead_letter", 3)
@@ -234,6 +239,8 @@ def test_the_daily_model_budget_defers_new_segments_to_tomorrow(api, monkeypatch
     assert '"daily_limit": 1' in payload
     assert api.call("GET", f"/api/jobs/{first['id']}").json()["status"] == "awaiting_approval"
     assert api.call("GET", "/api/metrics").json()["reliability"]["budget_deferrals"] == 1
+    shown = api.call("GET", f"/api/jobs/{second['id']}").json()
+    assert shown["phase"] == "deferred" and shown["next_attempt_at"].startswith(tomorrow)
 
 
 # ------------------------------------------------------------------ fallback (cat 4)

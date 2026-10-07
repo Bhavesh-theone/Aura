@@ -9,7 +9,7 @@ import { Avatar, Segmented, Tip, inputCls } from "@/shared/ui/primitives";
 import { EmptyState, InlineError, Skel } from "@/shared/ui/States";
 import { useDeals } from "@/features/deals/hooks";
 import { useActivity } from "../hooks";
-import { isRejection, isSystemActor, linkFor, payloadFacts, toneFor, verbFor } from "../present";
+import { isRejection, isSystemActor, linkFor, payloadFacts, toneFor, traceIdFor, verbFor } from "../present";
 import type { ActivityEntry } from "../types";
 import { AuditChainStatus } from "./AuditChainStatus";
 
@@ -51,6 +51,7 @@ function Row({ entry, dealRef }: { entry: ActivityEntry; dealRef?: string }) {
   const tone = toneFor(entry.action, entry.payload);
   const facts = payloadFacts(entry.payload);
   const link = linkFor(entry);
+  const traceId = traceIdFor(entry.payload);
   return (
     <li className="group relative grid grid-cols-[64px_20px_1fr] gap-x-3 py-2.5">
       <Tip label={formatDateTime(entry.created_at)} side="left">
@@ -68,6 +69,12 @@ function Row({ entry, dealRef }: { entry: ActivityEntry; dealRef?: string }) {
           {link ? (
             <Link href={link.href} className="inline-flex items-center gap-0.5 rounded-xs text-[11px] text-muted hover:text-fg">
               {link.label}
+              <ArrowUpRight className="h-3 w-3" />
+            </Link>
+          ) : null}
+          {traceId ? (
+            <Link href={`/traces/${traceId}`} className="inline-flex items-center gap-0.5 rounded-xs text-[11px] text-muted hover:text-fg">
+              Trace
               <ArrowUpRight className="h-3 w-3" />
             </Link>
           ) : null}

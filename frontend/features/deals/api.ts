@@ -1,7 +1,7 @@
 import { API_BASE, ApiError, SERVER_DOWN_MESSAGE, apiDownload, apiFetch, errorForStatus, getToken } from "@/shared/api/client";
 import type {
   AgentRun, AgentRunDetail, Condition, CreateMandateBody, Deal, DealDetail, DealParty, DealDocument, DiligenceItem, DocumentVersion,
-  Extraction, Finding, GuardResult, Mandate, Member, Party, Signoff,
+  DealNote, Extraction, Finding, GuardResult, Mandate, Member, Party, Signoff,
 } from "./types";
 
 export const listDeals = () => apiFetch<Deal[]>("/api/deals");
@@ -116,3 +116,4 @@ export function uploadDocumentWithProgress(id: number, form: FormData, onProgres
     xhr.send(form);
   });
 }
+export const listNotes = (id: number) => apiFetch<DealNote[]>(`/api/deals/${id}/notes`);

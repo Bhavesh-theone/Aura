@@ -13,7 +13,9 @@ def make_engine(url: str | None = None):
     url = url or get_settings().database_url
     kwargs: dict = {"future": True}
     if url.startswith("sqlite"):
-        kwargs["connect_args"] = {"check_same_thread": False}
+        # timeout: how long a writer waits for another process's lock (the API and an eval
+        # run share the file) before "database is locked". pysqlite's default is 5 s.
+        kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
         if ":memory:" in url:
             # One shared connection, else every thread would see an empty database.
             kwargs["poolclass"] = StaticPool

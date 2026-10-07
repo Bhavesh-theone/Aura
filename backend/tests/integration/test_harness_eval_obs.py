@@ -127,6 +127,38 @@ def test_the_cli_exits_non_zero_below_threshold(api, monkeypatch, capsys):
     assert eval_run.main(["--capability", "draft_email", "--limit", "2"]) == 0
 
 
+def test_a_spot_check_over_some_cases_is_stored_but_never_counts_for_autonomy(api):
+    full = _eval_run(api, "classify_document", True)
+    spot = eval_run.evaluate("classify_document", StubOrchestrator(), "crew", "stub",
+                             api.session, case_ids={"cls-015", "cls-016"})
+    assert [c.case_id for c in spot.cases] == ["cls-015", "cls-016"]
+    assert spot.metrics["partial"] is True and spot.metrics["case_ids"] == ["cls-015",
+                                                                           "cls-016"]
+    assert SqlEvalRepository(api.session).latest("classify_document").id == full.id
+    whole = eval_run.evaluate("draft_email", StubOrchestrator(), "stub", "stub", api.session)
+    assert "partial" not in whole.metrics
+
+
+def test_the_cli_filters_cases_and_skips_capabilities_without_them(api, monkeypatch, capsys):
+    import aura.data.engine as engine_module
+    monkeypatch.setattr(engine_module, "SessionLocal", lambda: nullcontext(api.session))
+    monkeypatch.setattr(engine_module, "engine", api.session.get_bind())
+    assert eval_run.main(["--capability", "all", "--cases", "ext-001,ext-002"]) == 0
+    out = capsys.readouterr().out
+    assert "extract_financials" in out and "classify_document" not in out
+    assert eval_run.main(["--capability", "all", "--cases", "nope-1"]) == 2
+
+
+def test_agent_runs_carry_their_trace(api):
+    deal = make_deal(api)
+    doc = upload(api, deal, "term_sheet.pdf", "nda")
+    job = submit(api, {"capability": "classify_document", "document_id": doc["id"]},
+                 deal_id=deal)
+    run_worker(api)
+    (run,) = api.call("GET", f"/api/agent-runs?deal_id={deal}").json()
+    assert run["trace_id"] == job["trace_id"] and len(run["span_id"]) == 16
+
+
 def test_golden_sets_are_big_enough():
     assert len(eval_run.load_golden("classify_document")[0]) >= 20
     assert len(eval_run.load_golden("extract_financials")[0]) >= 10

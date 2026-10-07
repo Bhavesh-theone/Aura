@@ -77,6 +77,8 @@ export class ApiError extends Error {
   kind: ApiErrorKind;
   status: number | null;
   detail: unknown;
+  /** Seconds from a Retry-After header (429), when the server sent one. */
+  retryAfter: number | null = null;
 
   constructor(kind: ApiErrorKind, message: string, status: number | null = null, detail?: unknown) {
     super(message);
@@ -117,6 +119,10 @@ type RequestOptions = {
   auth?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Extra request headers (e.g. Idempotency-Key). */
+  headers?: Record<string, string>;
+  /** Called with the raw Response of a successful call (to read status/headers). */
+  onResponse?: (res: Response) => void;
 };
 
 /**
@@ -124,9 +130,9 @@ type RequestOptions = {
  * into an ApiError so callers never see a raw TypeError from a dead server.
  */
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, auth = true, signal, timeoutMs = 12000 } = options;
+  const { method = "GET", body, auth = true, signal, timeoutMs = 12000, headers: extraHeaders, onResponse } = options;
 
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = { Accept: "application/json", ...extraHeaders };
   const isForm = typeof FormData !== "undefined" && body instanceof FormData;
   if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
   if (auth) {
@@ -175,8 +181,12 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     } catch {
       /* non-JSON error body */
     }
-    throw errorForStatus(res.status, detail, sentToken);
+    const err = errorForStatus(res.status, detail, sentToken);
+    const raw = res.headers.get("Retry-After");
+    if (raw && Number.isFinite(Number(raw))) err.retryAfter = Number(raw);
+    throw err;
   }
+  onResponse?.(res);
 
   if (res.status === 204) return undefined as T;
 

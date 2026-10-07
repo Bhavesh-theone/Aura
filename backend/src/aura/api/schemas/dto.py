@@ -34,6 +34,13 @@ class JobResponse(BaseModel):
     created_by: str | None = None
     # The job's trace (GET /api/traces/{trace_id}).
     trace_id: str | None = None
+    # Reliability state of the job's latest segment (migration 0011). phase is 'retrying'
+    # (a transient failure, requeued with backoff), 'deferred' (the daily model budget is
+    # spent; it runs after next_attempt_at) or 'dead_letter'; None otherwise.
+    attempts: int = 0
+    phase: str | None = None
+    next_attempt_at: datetime | None = None
+    last_error: str | None = None
 
 
 class DeadLetterResponse(BaseModel):

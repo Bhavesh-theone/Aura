@@ -71,8 +71,11 @@ class SqlEvalRepository:
         stmt = select(EvalRunRow).where(EvalRunRow.capability == capability)
         if not include_stub:
             stmt = stmt.where(EvalRunRow.orchestrator != "stub")
-        row = self.s.scalars(stmt.order_by(EvalRunRow.completed_at.desc(),
-                                           EvalRunRow.id.desc()).limit(1)).first()
+        # A run over part of the golden set (--limit / --cases) is a spot check: it is kept
+        # and shown, but it is not evidence for promotion or demotion.
+        rows = self.s.scalars(stmt.order_by(EvalRunRow.completed_at.desc(),
+                                            EvalRunRow.id.desc()))
+        row = next((r for r in rows if not (r.metrics or {}).get("partial")), None)
         return _run(row) if row else None
 
 

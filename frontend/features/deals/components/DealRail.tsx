@@ -1,19 +1,20 @@
 "use client";
 
-import { BadgeCheck, Plus, ShieldCheck, ShieldQuestion, UserMinus, Users, X } from "lucide-react";
+import { BadgeCheck, Plus, StickyNote, ShieldCheck, ShieldQuestion, UserMinus, Users, X } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { useAuth } from "@/features/auth/hooks";
 import { WHO_CAN } from "@/features/auth/roles";
 import { useCan } from "@/features/auth/useCan";
 import { dealEvents } from "@/shared/api/events";
-import { cx, formatDateTime, shortDate, titleCase } from "@/shared/lib/format";
+import { cx, formatDateTime, shortAgo, shortDate, titleCase } from "@/shared/lib/format";
 import { errMessage, useApi } from "@/shared/lib/useApi";
 import { Avatar, Badge, Button, Card, IconButton, Tip, inputCls, textareaCls } from "@/shared/ui/primitives";
 import { Permit } from "@/shared/ui/Permit";
 import { InlineError, Notice, Skel } from "@/shared/ui/States";
 import { useToast } from "@/shared/ui/toast";
-import { addMember, listMembers, listSignoffs, patchDeal, removeMember, signOff } from "../api";
-import type { DealDetail, Member, Signoff } from "../types";
+import { addMember, listMembers, listNotes, listSignoffs, patchDeal, removeMember, signOff } from "../api";
+import type { DealDetail, DealNote, Member, Signoff } from "../types";
 
 function RailCard({ title, icon, aside, children }: { title: string; icon: React.ReactNode; aside?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -364,6 +365,41 @@ export function ComplianceCard({ deal, onChanged }: { deal: DealDetail; onChange
         ) : null}
       </div>
       {error ? <div className="px-3 pb-3"><Notice tone="error">{error}</Notice></div> : null}
+    </RailCard>
+  );
+}
+
+/* ---------------------------------- Notes ---------------------------------- */
+
+export function NotesCard({ deal }: { deal: DealDetail }) {
+  const notes = useApi<DealNote[]>(() => listNotes(deal.id), [], [deal.id], { live: dealEvents(deal.id, ["job", "deal"]) });
+  return (
+    <RailCard
+      title="Notes"
+      icon={<StickyNote className="h-3.5 w-3.5" />}
+      aside={notes.data.length ? <span className="num font-mono text-[11px] text-muted">{notes.data.length}</span> : null}
+    >
+      {notes.loading ? (
+        <RailSkeleton rows={2} />
+      ) : notes.error && !notes.data.length ? (
+        <div className="p-3"><InlineError message={notes.error} onRetry={notes.refresh} /></div>
+      ) : notes.data.length === 0 ? (
+        <p className="px-4 py-3 text-[12px] text-muted">No internal notes. Agents add notes with add_internal_note.</p>
+      ) : (
+        <ul className="divide-y divide-line-subtle">
+          {notes.data.map((n) => (
+            <li key={n.id} className="px-4 py-2.5">
+              <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-fg">{n.body}</p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                <span>{titleCase(n.author)}</span>
+                <Badge tone={n.source === "agent" ? "accent" : "neutral"}>{n.source}</Badge>
+                {n.job_id ? <Link href="/jobs" className="font-mono hover:text-fg">JOB-{n.job_id}</Link> : null}
+                <span className="ml-auto" title={formatDateTime(n.created_at)}>{shortAgo(n.created_at)}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </RailCard>
   );
 }

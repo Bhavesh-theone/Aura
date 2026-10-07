@@ -1,6 +1,7 @@
 "use client";
 
-import { Bot, ChevronRight, Copy, User, Wrench } from "lucide-react";
+import { ArrowUpRight, Bot, ChevronRight, Copy, User, Wrench } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { dealEvents } from "@/shared/api/events";
 import { cx, formatDateTime, humanize } from "@/shared/lib/format";
@@ -108,6 +109,15 @@ export function RunDrawer({ runId, onClose }: { runId: number | null; onClose: (
                 </div>
               ))}
             </dl>
+            {r.trace_id ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line-subtle pt-3 text-[12px] text-muted">
+                Trace <code className="font-mono text-fg-2">{r.trace_id}</code>
+                {r.span_id ? <>span <code className="font-mono text-fg-2">{r.span_id}</code></> : null}
+                <Link href={`/traces/${r.trace_id}${r.span_id ? `?span=${r.span_id}` : ""}`} className="ml-auto inline-flex items-center gap-1 text-accent hover:underline">
+                  Open trace <ArrowUpRight className="h-3 w-3" />
+                </Link>
+              </div>
+            ) : null}
             {r.confidence != null ? (
               <div className="mt-3 flex items-center gap-2 border-t border-line-subtle pt-3 text-[12px] text-muted">
                 Confidence <ConfidenceCells value={r.confidence} />

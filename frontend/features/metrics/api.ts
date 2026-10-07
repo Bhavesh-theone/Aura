@@ -12,6 +12,34 @@ export type SuccessMetrics = {
   deals_closed_end_to_end: number;
 };
 
-export type Metrics = { stage_dwell: StageDwell[]; success: SuccessMetrics };
+export type ReliabilityMetrics = {
+  dead_lettered_segments: number;
+  retried_segments: number;
+  recovered_segments: number;
+  fallback_runs: number;
+  budget_deferrals: number;
+};
+export type OverrideRate = { capability: string; decisions: number; overrides: number; rate: number | null; window_days: number };
+export type LatestEval = {
+  capability: string;
+  eval_run_id: number;
+  orchestrator: string;
+  model_id: string;
+  score: number;
+  threshold: number;
+  passed: boolean;
+  completed_at: string;
+};
+export type AutonomyLevel = { capability: string; level: number; reason: string | null; demoted_at: string | null };
+export type EvaluationMetrics = { latest_runs: LatestEval[]; override_rate: OverrideRate[]; autonomy: AutonomyLevel[] };
+export type SecurityMetrics = { injection_suspected: number; untrusted_content_handoffs: number };
+
+export type Metrics = {
+  stage_dwell: StageDwell[];
+  success: SuccessMetrics;
+  reliability?: ReliabilityMetrics | null;
+  evaluation?: EvaluationMetrics | null;
+  security?: SecurityMetrics | null;
+};
 
 export const getMetrics = () => apiFetch<Metrics>("/api/metrics");

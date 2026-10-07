@@ -1,14 +1,15 @@
 "use client";
 
 import { CheckCircle2, CircleDashed, XCircle } from "lucide-react";
+import Link from "next/link";
 import { STAGES } from "@/features/deals/types";
 import { anyEvent } from "@/shared/api/events";
-import { cx, stageLabel } from "@/shared/lib/format";
+import { cx, formatDateTime, humanize, stageLabel } from "@/shared/lib/format";
 import { useApi } from "@/shared/lib/useApi";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Badge, Card, CardHeader, Tip } from "@/shared/ui/primitives";
 import { EmptyState, InlineError, Skel, Unavailable } from "@/shared/ui/States";
-import { getMetrics, type Metrics, type StageDwell, type SuccessMetrics } from "../api";
+import { getMetrics, type EvaluationMetrics, type Metrics, type ReliabilityMetrics, type SecurityMetrics, type StageDwell, type SuccessMetrics } from "../api";
 
 /* --------------------------------- helpers -------------------------------- */
 
@@ -189,6 +190,130 @@ function DwellTable({ rows }: { rows: StageDwell[] }) {
   );
 }
 
+function StatTile({ label, value, caption, danger }: { label: string; value: number; caption: string; danger?: boolean }) {
+  return (
+    <div className={cx("flex flex-col rounded-md border bg-surface p-4 shadow-card", danger ? "border-danger-border" : "border-line")}>
+      <span className="text-[12px] leading-snug text-muted">{label}</span>
+      <span className={cx("num mt-2 font-serif text-[32px] leading-none", danger ? "text-danger" : "text-fg")}>{value}</span>
+      <p className="mt-3 text-[12px] leading-relaxed text-fg-2">{caption}</p>
+    </div>
+  );
+}
+
+const sectionLink = "text-[12px] font-medium text-accent hover:underline";
+
+function ReliabilitySection({ r }: { r: ReliabilityMetrics }) {
+  return (
+    <section aria-label="Reliability">
+      <div className="mb-3 flex items-center gap-3">
+        <h2 className="text-[12px] font-medium text-fg-2">Reliability</h2>
+        {r.dead_lettered_segments > 0 ? <Link href="/jobs" className={sectionLink}>Review dead letters</Link> : null}
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <StatTile label="Dead-lettered steps" value={r.dead_lettered_segments} danger={r.dead_lettered_segments > 0} caption="Agent steps that ran out of retries or lost their worker, all time. Open ones wait on Agent jobs." />
+        <StatTile label="Retried" value={r.retried_segments} caption="Steps retried after a failure, automatically or by hand." />
+        <StatTile label="Recovered" value={r.recovered_segments} caption="Steps picked up again after a worker stalled mid-run." />
+        <StatTile label="Fallback runs" value={r.fallback_runs} caption="Runs that used the stub because the local model was down." />
+        <StatTile label="Budget deferrals" value={r.budget_deferrals} caption="Steps pushed to later because the daily model-call budget was reached." />
+      </div>
+    </section>
+  );
+}
+
+const LEVEL_LABEL: Record<number, string> = { 0: "0 · Off", 1: "1 · Supervised", 2: "2 · Autonomous" };
+
+function EvaluationSection({ e }: { e: EvaluationMetrics }) {
+  const caps = Array.from(new Set([...e.latest_runs.map((x) => x.capability), ...e.override_rate.map((x) => x.capability), ...e.autonomy.map((x) => x.capability)]));
+  return (
+    <section aria-label="Evaluation">
+      <div className="mb-3 flex items-center gap-3">
+        <h2 className="text-[12px] font-medium text-fg-2">Evaluation</h2>
+        <Link href="/quality" className={sectionLink}>Open Agent quality</Link>
+      </div>
+      <Card>
+        {caps.length === 0 ? (
+          <EmptyState compact title="No evaluation data yet" description="Capabilities appear here once they have an eval run or a decision." />
+        ) : (
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="h-8 border-b border-line-subtle text-[11px] text-muted">
+                <th className="px-4 font-medium">Capability</th>
+                <th className="px-2 font-medium">Latest eval</th>
+                <th className="px-2 font-medium">Override rate</th>
+                <th className="px-4 font-medium">Autonomy</th>
+              </tr>
+            </thead>
+            <tbody>
+              {caps.map((c) => {
+                const run = e.latest_runs.find((x) => x.capability === c);
+                const or = e.override_rate.find((x) => x.capability === c);
+                const au = e.autonomy.find((x) => x.capability === c);
+                return (
+                  <tr key={c} className="border-b border-line-subtle align-top text-[13px] last:border-0">
+                    <td className="px-4 py-2.5 text-fg">{humanize(c)}</td>
+                    <td className="px-2 py-2.5">
+                      {run ? (
+                        <div className="flex flex-col gap-1">
+                          <span className="flex items-center gap-2">
+                            <Badge tone={run.passed ? "success" : "danger"}>{run.passed ? "Pass" : "Fail"}</Badge>
+                            <span className="num font-mono text-[12px] text-fg-2">{run.score.toFixed(2)} / {run.threshold.toFixed(2)}</span>
+                          </span>
+                          <span className="text-[11px] text-muted">{run.orchestrator} · {run.model_id} · {formatDateTime(run.completed_at)}</span>
+                        </div>
+                      ) : (
+                        <span className="text-muted">No eval run yet</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2.5">
+                      {or && or.rate != null ? (
+                        <span className="num font-mono text-[12px] text-fg-2">
+                          {Math.round(or.rate * 1000) / 10}% <span className="text-muted">({or.overrides}/{or.decisions}, {or.window_days} d)</span>
+                        </span>
+                      ) : (
+                        <span className="text-muted">No decisions</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {au ? (
+                        <div className="flex flex-col gap-1">
+                          <Badge tone={au.level === 0 ? "danger" : au.level === 2 ? "accent" : "neutral"}>{LEVEL_LABEL[au.level] ?? `Level ${au.level}`}</Badge>
+                          {au.reason ? <span className="max-w-xs text-[11px] text-warning">Demoted: {au.reason}</span> : null}
+                        </div>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </section>
+  );
+}
+
+function SecuritySection({ s }: { s: SecurityMetrics }) {
+  return (
+    <section aria-label="Security">
+      <div className="mb-3 flex items-center gap-3">
+        <h2 className="text-[12px] font-medium text-fg-2">Security</h2>
+        {s.untrusted_content_handoffs > 0 ? <Link href="/decisions" className={sectionLink}>Review untrusted-content decisions</Link> : null}
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <StatTile
+          label="Injection suspected"
+          value={s.injection_suspected}
+          danger={s.injection_suspected > 0}
+          caption={s.injection_suspected === 0 ? "No document or tool text looked like a prompt injection." : "Times text inside a document or tool result looked like an instruction to the agent."}
+        />
+        <StatTile label="Untrusted-content handoffs" value={s.untrusted_content_handoffs} caption="Decisions forced onto a person because the injection screen fired." />
+      </div>
+    </section>
+  );
+}
+
 function MetricsSkeleton() {
   return (
     <div className="space-y-6 px-8" aria-busy="true" aria-label="Loading metrics">
@@ -246,6 +371,9 @@ export function MetricsView() {
               <DwellTable rows={m.data.stage_dwell} />
             )}
           </section>
+          {m.data.reliability ? <ReliabilitySection r={m.data.reliability} /> : null}
+          {m.data.evaluation ? <EvaluationSection e={m.data.evaluation} /> : null}
+          {m.data.security ? <SecuritySection s={m.data.security} /> : null}
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@ export type HandoffOption = { id: string; label: string; consequence: string; re
 
 export type HandoffStatus = "open" | "resolved" | "escalated";
 export type HandoffDirection = "bot_to_human" | "human_to_bot";
-export type HandoffTrigger = "confidence_below_threshold" | "materiality_gate" | "policy_required" | "explicit_request" | "human_correction";
+export type HandoffTrigger = "confidence_below_threshold" | "materiality_gate" | "policy_required" | "explicit_request" | "human_correction" | "untrusted_content";
 
 export type Directive = {
   decision?: string;

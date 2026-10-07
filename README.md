@@ -231,6 +231,9 @@ uv run pytest tests -q                       # full suite
 uv run lint-imports --config .importlinter   # layering rule
 uv run alembic check                         # models and migrations agree
 uv run python -m aura.data.verify_audit      # audit hash chain + anchor
+uv run python -m aura.evals.run --capability all --orchestrator stub   # golden sets on the deterministic stub (< 2 s)
+uv run python -m aura.evals.run --capability classify_document --orchestrator crew --cases cls-015,cls-016   # real-model spot check (needs Ollama; a partial run)
+uv run python -m aura.evals.autonomy         # what the autonomy demotion rules would do now (--apply to do it)
 
 cd ../frontend
 npm run build                                # must pass with no type errors
@@ -265,7 +268,7 @@ Aura/
 - [RUNNING.md](RUNNING.md) — full operating guide: setup, roles and permissions, API reference, agents, migrations, troubleshooting.
 - [docs/PRD-v1.md](docs/PRD-v1.md) — what v1 builds and why, scoped from the SOSPE master specification.
 - [docs/PRD-v1-conformance.md](docs/PRD-v1-conformance.md) — requirement-by-requirement status, plus the end-to-end run log.
-- [docs/agentic-harness.md](docs/agentic-harness.md) — agent loop mapped to the 13 agentic-harness categories, with an interactive [architecture diagram](docs/architecture/agentic-harness.html), coverage scorecard and fixes.
+- [docs/agentic-harness.md](docs/agentic-harness.md) — agent loop mapped to the 13 agentic-harness categories, with an interactive [architecture diagram](docs/architecture/agentic-harness.html), coverage scorecard, what has been implemented and what remains.
 - [docs/market-research.md](docs/market-research.md) — comparable real-world platforms, capability matrix, 65-feature benchmark and PRD-v2 candidates.
 
 ## Status and limitations

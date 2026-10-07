@@ -55,6 +55,9 @@ class AgentRunOut(BaseModel):
     started_at: datetime
     completed_at: datetime
     tool_calls: list
+    # The llm.call span the run was recorded under (GET /api/traces/{trace_id}).
+    trace_id: str | None = None
+    span_id: str | None = None
 
 
 class AgentRunDetailOut(AgentRunOut):

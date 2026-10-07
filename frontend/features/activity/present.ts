@@ -21,6 +21,9 @@ export const AUDIT_ACTIONS = [
   "handoff_created", "handoff_resolved", "handoff_rejected", "handoff_escalated", "handoff_skipped_per_directive",
   "outbound_executed",
   "job_submitted", "job_completed", "segment_failed",
+  "segment_retry_scheduled", "segment_dead_lettered", "segment_recovered", "segment_retried",
+  "budget_deferred", "orchestrator_fallback", "stale_result_discarded",
+  "autonomy_demoted", "autonomy_promoted", "injection_suspected", "note_added",
   "user_created", "user_updated",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -127,7 +130,51 @@ const SPEC: Record<AuditAction, Spec> = {
   },
   job_submitted: { verb: "submitted an agent job", tone: "info", link: job },
   job_completed: { verb: "completed an agent job", tone: "success", link: job },
-  segment_failed: { verb: "failed an agent step", tone: "danger", link: job },
+  segment_failed: {
+    verb: (p) => (p.permanent === true ? "failed an agent step for good" : "failed an agent step"),
+    tone: "danger",
+    link: job,
+  },
+  segment_retry_scheduled: {
+    verb: (p) => `scheduled a retry${typeof p.attempts === "number" ? ` (attempt ${p.attempts})` : ""}`,
+    tone: "warning",
+    link: job,
+  },
+  segment_dead_lettered: {
+    verb: (p) => (p.reason === "lease_expired" ? "dead-lettered an agent step (worker went silent)" : "dead-lettered an agent step (retries used up)"),
+    tone: "danger",
+    link: () => ({ href: "/jobs", label: "Review dead letters" }),
+  },
+  segment_recovered: { verb: "recovered an agent step after a worker stall", tone: "success", link: job },
+  segment_retried: { verb: "retried an agent step by hand", tone: "accent", link: job },
+  budget_deferred: {
+    verb: (p) =>
+      typeof p.llm_calls_today === "number" && typeof p.daily_limit === "number"
+        ? `deferred a step: daily model budget reached (${p.llm_calls_today}/${p.daily_limit})`
+        : "deferred a step: daily model budget reached",
+    tone: "warning",
+    link: job,
+  },
+  orchestrator_fallback: { verb: "fell back to the stub orchestrator (model unavailable)", tone: "warning", link: job },
+  stale_result_discarded: { verb: "discarded a stale agent result", tone: "warning", link: job },
+  autonomy_demoted: {
+    verb: (p) =>
+      `demoted ${str(p.capability) ? humanize(str(p.capability)!).toLowerCase() : "a capability"}${typeof p.from_level === "number" ? ` from level ${p.from_level} to ${p.to_level}` : ""}`,
+    tone: "warning",
+    link: () => ({ href: "/quality", label: "Agent quality" }),
+  },
+  autonomy_promoted: {
+    verb: (p) =>
+      `promoted ${str(p.capability) ? humanize(str(p.capability)!).toLowerCase() : "a capability"}${typeof p.from_level === "number" ? ` from level ${p.from_level} to ${p.to_level}` : ""}`,
+    tone: "success",
+    link: () => ({ href: "/quality", label: "Agent quality" }),
+  },
+  injection_suspected: {
+    verb: (p) => `flagged suspected prompt injection${typeof p.risk_score === "number" ? ` (risk ${p.risk_score})` : ""}`,
+    tone: "danger",
+    link: (e) => (e.job_id ? job(e) : decisions(e.payload)),
+  },
+  note_added: { verb: "added a deal note", tone: "neutral", link: (e) => dealTab(e) },
   user_created: { verb: (p) => (str(p.username) ? `created the user ${p.username}` : "created a user"), tone: "info", link: () => users },
   user_updated: {
     verb: (p) => {
@@ -167,7 +214,10 @@ export function linkFor(entry: ActivityEntry): ActivityLink | null {
 export const isRejection = (action: string, payload: Payload) => action === "handoff_resolved" && payload.approved === false;
 
 /** Shown in the verb or link already, or not useful in a fact row. */
-const HIDDEN_KEYS = new Set(["approved", "handoff_id", "resolved_by", "sha256", "argument_names"]);
+const HIDDEN_KEYS = new Set(["approved", "handoff_id", "resolved_by", "sha256", "argument_names", "trace_id", "span_id"]);
+
+/** Trace id carried by audit rows written inside a span, if any. */
+export const traceIdFor = (payload: Payload): string | null => str(payload.trace_id) || null;
 
 /** One array element as text: identifiers read "PAN AAACK1234F", other objects as JSON. */
 function listItem(item: unknown): string {

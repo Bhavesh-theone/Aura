@@ -20,7 +20,7 @@ import { getDeal } from "../api";
 import { isTerminal, type DealDetail } from "../types";
 import { AdvanceSheet } from "./AdvanceSheet";
 import { StageRail } from "./StageRail";
-import { ComplianceCard, TeamCard } from "./DealRail";
+import { ComplianceCard, NotesCard, TeamCard } from "./DealRail";
 import { DocumentsTab } from "./DocumentsTab";
 import { ExtractionsTab } from "./ExtractionsTab";
 import { MandateTab } from "./MandateTab";
@@ -30,7 +30,7 @@ import { ClassChip, StageChip } from "./ui";
 
 const TABS = ["Parties", "Mandate", "Documents", "Diligence", "Conditions", "Extractions", "History", "Agent runs"] as const;
 /** `?tab=` slug for a tab: "Agent runs" → "agent-runs". Activity links use these. */
-const tabSlug = (t: string) => t.toLowerCase().replace(/s+/g, "-");
+const tabSlug = (t: string) => t.toLowerCase().replace(/\s+/g, "-");
 const tabFromSlug = (slug: string | null) => TABS.find((t) => tabSlug(t) === slug);
 
 function DetailSkeleton() {
@@ -261,6 +261,7 @@ export function DealDetailView() {
         <aside aria-label="Deal team and compliance" className="space-y-3 xl:sticky xl:top-[60px]">
           <TeamCard deal={deal} />
           <ComplianceCard deal={deal} onChanged={refresh} />
+          <NotesCard deal={deal} />
         </aside>
       </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlarmClock, ArrowUpRight, Check, CheckCircle2, FileSearch, Hourglass, Lock, Plus, RotateCcw, Siren, Sparkles, X, XCircle } from "lucide-react";
+import { AlarmClock, ArrowUpRight, Check, CheckCircle2, Hourglass, Info, ShieldAlert, Lock, Plus, RotateCcw, Siren, Sparkles, X, XCircle } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/shared/api/client";
@@ -16,55 +16,11 @@ import { useDeals } from "@/features/deals/hooks";
 import type { Deal } from "@/features/deals/types";
 import { useAuth } from "@/features/auth/hooks";
 import { canResolve, roleLabel, whoCanResolve } from "@/features/auth/roles";
+import { getJob } from "@/features/jobs/api";
+import { EvidenceList, show } from "./Evidence";
 import { isEscalated, listHandoffs, listResolvedHandoffs, resolveHandoff, type Handoff, type HandoffOption } from "../api";
 
 /* --------------------------------- helpers -------------------------------- */
-
-/** Long free text (an email draft, a reviewer's notes) gets its own block. */
-const LONG_KEYS = new Set(["body", "review_notes", "rationale"]);
-
-/** A proposed-action evidence item as labelled facts, not a JSON dump. */
-function EvidenceBody({ ev }: { ev: unknown }) {
-  const o = ev && typeof ev === "object" ? (ev as Record<string, unknown>) : null;
-  const args = o && o.arguments && typeof o.arguments === "object" ? (o.arguments as Record<string, unknown>) : null;
-  if (!o || !args) return <span className="min-w-0 break-words">{show(ev)}</span>;
-  const entries = Object.entries(args).filter(([, v]) => v !== null && v !== undefined && v !== "");
-  const short = entries.filter(([k]) => !LONG_KEYS.has(k));
-  const long = entries.filter(([k]) => LONG_KEYS.has(k));
-  return (
-    <div className="min-w-0 flex-1 space-y-2">
-      <div className="font-mono text-[11px] text-muted">{typeof o.tool === "string" ? o.tool : "proposed action"}</div>
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-        {short.map(([k, v]) => (
-          <div key={k} className="contents">
-            <dt className="text-muted">{humanize(k)}</dt>
-            <dd className="min-w-0 break-words text-fg">{typeof v === "object" ? JSON.stringify(v) : String(v)}</dd>
-          </div>
-        ))}
-      </dl>
-      {long.map(([k, v]) => (
-        <div key={k}>
-          <div className="mb-1 text-muted">{humanize(k)}</div>
-          <p className="whitespace-pre-wrap rounded-sm border border-line-subtle bg-canvas px-2.5 py-2 text-[12px] leading-relaxed text-fg">{String(v)}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function show(v: unknown): string {
-  if (typeof v === "string") return v;
-  if (v && typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    const text = o.summary ?? o.text ?? o.description ?? o.title ?? o.label;
-    if (typeof text === "string") return text;
-  }
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
-}
 
 function useNow(ms = 1000) {
   const [now, setNow] = useState(() => Date.now());
@@ -288,6 +244,10 @@ function HandoffDetail({ handoff, deal, onResolved }: { handoff: Handoff; deal?:
   const [error, setError] = useState<{ title: string; body: string } | null>(null);
   const [confirm, setConfirm] = useState(false);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const injection = handoff.trigger === "untrusted_content";
+  const level1 = (ctx.what_happened ?? []).some((w) => show(w).includes("is at level 1"));
+  const jobTrace = useApi(handoff.job_id ? () => getJob(handoff.job_id as number) : null, null, [handoff.job_id]);
+  const traceId = jobTrace.data?.trace_id ?? null;
 
   useEffect(() => {
     setDecision("");
@@ -363,7 +323,11 @@ function HandoffDetail({ handoff, deal, onResolved }: { handoff: Handoff; deal?:
       {/* Eyebrow */}
       <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted">
         {escalated ? <Badge tone="danger"><Siren className="h-3 w-3" /> Escalated</Badge> : null}
-        <Badge tone="accent">{humanize(handoff.trigger)}</Badge>
+        {injection ? (
+          <Badge tone="danger"><ShieldAlert className="h-3 w-3" /> Possible prompt injection</Badge>
+        ) : (
+          <Badge tone="accent">{humanize(handoff.trigger)}</Badge>
+        )}
         {handoff.task_type ? <span className="font-mono text-[11px]">{handoff.task_type}</span> : null}
         {handoff.deal_id ? (
           <Link href={`/deals/${handoff.deal_id}`} className="inline-flex items-center gap-1 text-fg-2 hover:text-fg">
@@ -372,10 +336,24 @@ function HandoffDetail({ handoff, deal, onResolved }: { handoff: Handoff; deal?:
             <ArrowUpRight className="h-3 w-3" />
           </Link>
         ) : null}
+        {traceId ? (
+          <Link href={`/traces/${traceId}`} className="inline-flex items-center gap-1 text-fg-2 hover:text-fg">
+            View trace <ArrowUpRight className="h-3 w-3" />
+          </Link>
+        ) : null}
         <span className="ml-auto num font-mono text-[11px]">raised {formatStamp(handoff.created_at)}</span>
       </div>
 
       <h1 className="mt-4 font-serif text-[28px] leading-[1.2] text-fg">{dr?.question ?? "A decision is needed"}</h1>
+      {level1 ? (
+        <div className="mt-4 flex items-start gap-2.5 rounded-md border border-info-border bg-info-soft px-3.5 py-2.5 text-[13px] text-fg">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
+          <span>
+            Supervised capability (autonomy level 1): every result goes to a person.{" "}
+            <Link href="/quality" className="text-accent hover:underline">See agent quality</Link>
+          </span>
+        </div>
+      ) : null}
       {!allowed ? (
         <RoleNote className="mt-3">
           {whoCanResolve(handoff.trigger)} You can read the brief.
@@ -498,14 +476,7 @@ function HandoffDetail({ handoff, deal, onResolved }: { handoff: Handoff; deal?:
           {ctx.evidence?.length ? (
             <section>
               <h2 className="mb-2.5 text-[12px] font-medium text-fg-2">Evidence</h2>
-              <ul className="space-y-1.5">
-                {ctx.evidence.map((ev, i) => (
-                  <li key={i} className="flex items-start gap-2 rounded-sm border border-line bg-surface px-3 py-2 text-[12px] text-fg-2">
-                    <FileSearch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
-                    <EvidenceBody ev={ev} />
-                  </li>
-                ))}
-              </ul>
+              <EvidenceList items={ctx.evidence} dealId={handoff.deal_id} />
             </section>
           ) : null}
         </div>
@@ -800,7 +771,11 @@ export function DecisionsInbox() {
                             {rejected ? "Rejected" : "Resolved"}
                           </Badge>
                         ) : null}
-                        <Badge tone="neutral" className="h-[18px] text-[11px]">{humanize(h.trigger)}</Badge>
+                        {h.trigger === "untrusted_content" ? (
+                          <Badge tone="danger" className="h-[18px] text-[11px]"><ShieldAlert className="h-3 w-3" /> Possible prompt injection</Badge>
+                        ) : (
+                          <Badge tone="neutral" className="h-[18px] text-[11px]">{humanize(h.trigger)}</Badge>
+                        )}
                         <span className="num ml-auto font-mono text-[11px] text-muted" title={formatStamp(h.resolved_at ?? h.created_at)}>
                           {shortAgo(h.resolved_at ?? h.created_at)}
                         </span>

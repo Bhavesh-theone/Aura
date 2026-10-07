@@ -16,3 +16,9 @@ export function useCrumbs(crumbs: Crumb[] | null) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, set]);
 }
+
+/** Breadcrumb for a trace page: Agent jobs › Trace abcd1234. */
+export const traceCrumbs = (traceId: string): Crumb[] => [
+  { label: "Agent jobs", href: "/jobs" },
+  { label: `Trace ${traceId.slice(0, 8)}` },
+];

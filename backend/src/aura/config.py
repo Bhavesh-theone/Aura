@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     jwt_ttl_minutes: int = 480
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3.5:4b"
+    # Let a thinking model (qwen3.5) reason before answering. Off by default: on a 4B model
+    # the reasoning often used the whole output budget and the answer came back empty
+    # ("Invalid response from LLM call - None or empty"), and it is 5-10x slower.
+    ollama_think: bool = False
     # Actions above this rupee value are draft-only: a human decides (default 5 crore).
     materiality_cap_inr: int = 50_000_000
     # Where the audit anchor file lives. Unset means backend/data/audit_anchor.json for the

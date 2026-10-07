@@ -1,7 +1,7 @@
 """Run a capability against its golden set, through the real orchestrator path.
 
     uv run python -m aura.evals.run --capability classify_document|extract_financials|
-        draft_email|all [--orchestrator stub|crew] [--limit N]
+        draft_email|all [--orchestrator stub|crew] [--limit N] [--cases ID,ID]
 
 Each golden case becomes the same context a job would get (screened and wrapped by
 context_assembly), goes through Orchestrator.run, and is scored deterministically
@@ -42,10 +42,14 @@ def golden_path(capability: str) -> Path:
     return GOLDEN_DIR / f"{capability}.jsonl"
 
 
-def load_golden(capability: str, limit: int | None = None) -> tuple[list[dict], str]:
-    """(cases, sha256 of the file with LF line endings): the version that was scored."""
+def load_golden(capability: str, limit: int | None = None,
+                case_ids: set[str] | None = None) -> tuple[list[dict], str]:
+    """(cases, sha256 of the file with LF line endings): the version that was scored.
+    `case_ids` keeps only those cases (before `limit`); the digest is still the whole file's."""
     text = golden_path(capability).read_text(encoding="utf-8").replace("\r\n", "\n")
     cases = [json.loads(line) for line in text.splitlines() if line.strip()]
+    if case_ids:
+        cases = [c for c in cases if c.get("id") in case_ids]
     return (cases[:limit] if limit else cases), hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -141,8 +145,11 @@ def run_case(orchestrator, capability: str, case: dict, sink: CapturingSink,
 
 def evaluate(capability: str, orchestrator, orchestrator_name: str, model_id: str,
              session: Session, limit: int | None = None,
-             threshold: float | None = None, created_by: str = "cli") -> EvalRun:
-    """Run, score and store one capability's golden set. Commits."""
+             threshold: float | None = None, created_by: str = "cli",
+             case_ids: set[str] | None = None) -> EvalRun:
+    """Run, score and store one capability's golden set. Commits. A run over part of the
+    set (`limit` or `case_ids`) is stored with metrics.partial = true: it is shown, but
+    autonomy promotion and demotion ignore it."""
     from aura.data.repositories.sql_harness import SqlEvalRepository
     from aura.data.run_sink import SqlAgentRunSink
     from aura.data.spans import flush_spans
@@ -150,7 +157,8 @@ def evaluate(capability: str, orchestrator, orchestrator_name: str, model_id: st
     s = get_settings()
     limits = ContextLimits(max_chars=s.max_context_chars, excerpt_chars=s.context_excerpt_chars,
                            retrieval_top_k=0, injection_threshold=s.injection_risk_threshold)
-    cases, digest = load_golden(capability, limit)
+    cases, digest = load_golden(capability, limit, case_ids)
+    partial = len(cases) < len(load_golden(capability)[0])
     threshold = threshold_for(capability) if threshold is None else threshold
     sink = CapturingSink(SqlAgentRunSink(session))
     started = utcnow()
@@ -173,6 +181,8 @@ def evaluate(capability: str, orchestrator, orchestrator_name: str, model_id: st
                                                                       if r.error),
                         "total_latency_ms": sum(r.latency_ms for r in results),
                         "trace_id": span.trace_id})
+        if partial:
+            metrics.update({"partial": True, "case_ids": [c.get("id") for c in cases]})
         span.set("aura.eval.score", score)
     run = EvalRun(id=None, capability=capability, orchestrator=orchestrator_name,
                   model_id=model_id, golden_sha256=digest, n_cases=len(results), score=score,
@@ -228,6 +238,9 @@ def main(argv: list[str] | None = None) -> int:
                         choices=[*EVAL_CAPABILITIES, "all"])
     parser.add_argument("--orchestrator", choices=["stub", "crew"], default="stub")
     parser.add_argument("--limit", type=int, default=None, help="cases per capability")
+    parser.add_argument("--cases", default=None,
+                        help="comma-separated golden case ids (e.g. cls-015,cls-016); a "
+                             "partial run is stored but not used for autonomy")
     args = parser.parse_args(argv)
 
     from aura.data.engine import SessionLocal, engine
@@ -238,11 +251,17 @@ def main(argv: list[str] | None = None) -> int:
     tracer.configure(get_settings().tracing_enabled)
     orchestrator, model_id = make_orchestrator(args.orchestrator)
     capabilities = list(EVAL_CAPABILITIES) if args.capability == "all" else [args.capability]
+    case_ids = {c.strip() for c in args.cases.split(",") if c.strip()} if args.cases else None
+    if case_ids:
+        capabilities = [c for c in capabilities if load_golden(c, None, case_ids)[0]]
+        if not capabilities:
+            print(f"No golden case matches --cases {args.cases}", file=sys.stderr)
+            return 2
     runs = []
     with SessionLocal() as session:
         for capability in capabilities:
             runs.append(evaluate(capability, orchestrator, args.orchestrator, model_id,
-                                 session, args.limit))
+                                 session, args.limit, case_ids=case_ids))
     print(summary_table(runs))
     failed = [r.capability for r in runs if not r.passed]
     if failed:

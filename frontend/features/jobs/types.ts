@@ -20,6 +20,26 @@ export type Job = {
   deal_id: number | null;
   created_at: string;
   created_by: string | null;
+  trace_id: string | null;
+  attempts: number;
+  /** Derived: retrying (backing off), deferred (daily model budget spent), dead_letter. */
+  phase: JobPhase | null;
+  next_attempt_at: string | null;
+  last_error: string | null;
+};
+
+export type JobPhase = "retrying" | "deferred" | "dead_letter";
+
+/** GET /api/jobs/dead-letter row. */
+export type DeadLetter = {
+  job: Job;
+  segment_id: number;
+  seq: number;
+  status: "dead_letter";
+  attempts: number;
+  last_error: string | null;
+  claimed_by: string | null;
+  ended_at: string | null;
 };
 
 /** Agent capabilities the portal can launch (backend submit_job). */

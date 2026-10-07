@@ -150,7 +150,10 @@ class CrewOrchestrator:
 
         from aura.config import get_settings
         s = get_settings()
-        return LLM(model=f"ollama/{s.ollama_model}", base_url=s.ollama_base_url)
+        # Ollama's OpenAI-compatible endpoint takes reasoning_effort "none" to switch a
+        # thinking model's reasoning off (AURA_OLLAMA_THINK=true keeps it).
+        extra = {} if s.ollama_think else {"extra_body": {"reasoning_effort": "none"}}
+        return LLM(model=f"ollama/{s.ollama_model}", base_url=s.ollama_base_url, **extra)
 
     def _recorder(self, run_context: RunContext) -> RunRecorder:
         from aura.config import get_settings

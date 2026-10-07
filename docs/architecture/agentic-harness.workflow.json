@@ -9,300 +9,72 @@
       {
         "id": "agent-loop",
         "label": "Trigger to decision",
-        "focus": [
-          "api",
-          "ctx",
-          "worker",
-          "crew",
-          "gate",
-          "handoff",
-          "human"
-        ],
+        "focus": ["api", "ctx", "worker", "crew", "gate", "handoff", "human"],
         "note": "A job travels from the API through the crew to a human decision."
       },
       {
         "id": "guardrails",
         "label": "Deterministic guardrails",
-        "focus": [
-          "crew",
-          "gate",
-          "handoff",
-          "human",
-          "worker"
-        ],
-        "note": "Gated tools never execute; a human directive resumes or ends the job."
+        "focus": ["ctx", "crew", "gate", "handoff", "human", "worker"],
+        "note": "Gated tools never execute, suspicious text forces a human decision, and a directive resumes or ends the job."
       },
       {
         "id": "lineage",
-        "label": "Lineage and audit",
-        "focus": [
-          "crew",
-          "llm",
-          "runs",
-          "worker",
-          "state",
-          "handoff",
-          "audit"
-        ],
-        "note": "Every model call and mutation is recorded before it is used or shown."
+        "label": "Lineage and traces",
+        "focus": ["crew", "llm", "runs", "worker", "state", "handoff", "audit"],
+        "note": "Every model call, span and mutation is recorded before it is used or shown."
+      },
+      {
+        "id": "reliability",
+        "label": "Reliability and evaluation",
+        "focus": ["api", "worker", "state", "eval", "human"],
+        "note": "Retries, dead letters and recovery keep jobs moving; eval runs and override rates set each capability's autonomy."
       }
     ]
   },
   "lanes": [
-    {
-      "id": "ingress",
-      "label": "Ingress"
-    },
-    {
-      "id": "runtime",
-      "label": "Orchestration & Model"
-    },
-    {
-      "id": "policy",
-      "label": "Policy & Human-in-the-loop",
-      "variant": "exception"
-    },
-    {
-      "id": "evidence",
-      "label": "State, Lineage & Audit"
-    }
+    { "id": "ingress", "label": "Ingress" },
+    { "id": "runtime", "label": "Orchestration & Model" },
+    { "id": "policy", "label": "Policy & Human-in-the-loop", "variant": "exception" },
+    { "id": "evidence", "label": "State, Lineage & Evaluation" }
   ],
   "phases": [
-    {
-      "id": "intake",
-      "label": "Trigger + context",
-      "fromCol": 0,
-      "toCol": 1
-    },
-    {
-      "id": "loop",
-      "label": "Agent loop",
-      "fromCol": 2,
-      "toCol": 4,
-      "variant": "emphasis"
-    },
-    {
-      "id": "decide",
-      "label": "Decide + deliver",
-      "fromCol": 5,
-      "toCol": 5,
-      "variant": "dashed"
-    }
+    { "id": "intake", "label": "Trigger + context", "fromCol": 0, "toCol": 1 },
+    { "id": "loop", "label": "Agent loop", "fromCol": 2, "toCol": 4, "variant": "emphasis" },
+    { "id": "decide", "label": "Decide + deliver", "fromCol": 5, "toCol": 5, "variant": "dashed" }
   ],
   "groups": [
-    {
-      "id": "llm_zone",
-      "label": "LLM decides",
-      "lane": "runtime",
-      "fromCol": 3,
-      "toCol": 4,
-      "variant": "emphasis"
-    },
-    {
-      "id": "rules_zone",
-      "label": "Code decides",
-      "lane": "policy",
-      "fromCol": 3,
-      "toCol": 4,
-      "variant": "security"
-    }
+    { "id": "llm_zone", "label": "LLM decides", "lane": "runtime", "fromCol": 3, "toCol": 4, "variant": "emphasis" },
+    { "id": "rules_zone", "label": "Code decides", "lane": "policy", "fromCol": 3, "toCol": 4, "variant": "security" }
   ],
-  "mainPath": [
-    "api",
-    "ctx",
-    "worker",
-    "crew",
-    "gate",
-    "handoff",
-    "human"
-  ],
+  "mainPath": ["api", "ctx", "worker", "crew", "gate", "handoff", "human"],
   "nodes": [
-    {
-      "id": "api",
-      "lane": "ingress",
-      "col": 0,
-      "type": "frontend",
-      "label": "POST /api/jobs",
-      "sublabel": "role · wall · capability",
-      "width": 140
-    },
-    {
-      "id": "ctx",
-      "lane": "runtime",
-      "col": 1,
-      "type": "backend",
-      "label": "Context assembly",
-      "sublabel": "loaded as the user",
-      "width": 140
-    },
-    {
-      "id": "worker",
-      "lane": "runtime",
-      "col": 2,
-      "type": "backend",
-      "label": "Worker loop",
-      "sublabel": "poll 2s · run segment",
-      "width": 140
-    },
-    {
-      "id": "crew",
-      "lane": "runtime",
-      "col": 3,
-      "type": "backend",
-      "label": "CrewAI crew",
-      "sublabel": "classify · extract · draft",
-      "width": 140
-    },
-    {
-      "id": "llm",
-      "lane": "runtime",
-      "col": 4,
-      "type": "cloud",
-      "label": "Recording LLM",
-      "sublabel": "Ollama qwen3.5:4b",
-      "width": 140
-    },
-    {
-      "id": "gate",
-      "lane": "policy",
-      "col": 3,
-      "type": "security",
-      "label": "Gate policy",
-      "sublabel": "category + ₹5 Cr cap",
-      "width": 140
-    },
-    {
-      "id": "handoff",
-      "lane": "policy",
-      "col": 4,
-      "type": "security",
-      "label": "Handoff",
-      "sublabel": "question + options",
-      "width": 140
-    },
-    {
-      "id": "human",
-      "lane": "policy",
-      "col": 5,
-      "type": "external",
-      "label": "Dealmaker",
-      "sublabel": "records a directive",
-      "width": 140
-    },
-    {
-      "id": "state",
-      "lane": "evidence",
-      "col": 2,
-      "type": "database",
-      "label": "Job state",
-      "sublabel": "jobs · segments",
-      "width": 140
-    },
-    {
-      "id": "runs",
-      "lane": "runtime",
-      "col": 5,
-      "type": "database",
-      "label": "agent_run",
-      "sublabel": "prompt hash · tokens",
-      "width": 140
-    },
-    {
-      "id": "audit",
-      "lane": "evidence",
-      "col": 4,
-      "type": "database",
-      "label": "Audit chain",
-      "sublabel": "SHA-256 + anchor",
-      "width": 140
-    }
+    { "id": "api", "lane": "ingress", "col": 0, "type": "frontend", "label": "POST /api/jobs", "sublabel": "idempotent · rate cap", "width": 140 },
+    { "id": "ctx", "lane": "runtime", "col": 1, "type": "backend", "label": "Context assembly", "sublabel": "BM25 · screen", "width": 140 },
+    { "id": "worker", "lane": "runtime", "col": 2, "type": "backend", "label": "Worker loop", "sublabel": "claim · budgets", "width": 140 },
+    { "id": "crew", "lane": "runtime", "col": 3, "type": "backend", "label": "CrewAI crew", "sublabel": "classify · extract · draft", "width": 140 },
+    { "id": "llm", "lane": "runtime", "col": 4, "type": "cloud", "label": "Recording LLM", "sublabel": "retry · stub fallback", "width": 140 },
+    { "id": "runs", "lane": "runtime", "col": 5, "type": "database", "label": "agent_run + spans", "sublabel": "prompt hash · trace_id", "width": 140 },
+    { "id": "gate", "lane": "policy", "col": 3, "type": "security", "label": "Gate policy", "sublabel": "₹5 Cr cap · untrusted", "width": 140 },
+    { "id": "handoff", "lane": "policy", "col": 4, "type": "security", "label": "Handoff", "sublabel": "question + options", "width": 140 },
+    { "id": "human", "lane": "policy", "col": 5, "type": "external", "label": "Dealmaker", "sublabel": "records a directive", "width": 140 },
+    { "id": "eval", "lane": "evidence", "col": 1, "type": "backend", "label": "Eval + autonomy", "sublabel": "golden sets · autonomy", "width": 140 },
+    { "id": "state", "lane": "evidence", "col": 2, "type": "database", "label": "Job state", "sublabel": "retry · dead letter", "width": 140 },
+    { "id": "audit", "lane": "evidence", "col": 4, "type": "database", "label": "Audit chain", "sublabel": "SHA-256 + anchor", "width": 140 }
   ],
   "edges": [
-    {
-      "id": "enrich",
-      "from": "api",
-      "to": "ctx",
-      "label": "enrich",
-      "variant": "default"
-    },
-    {
-      "id": "queue",
-      "from": "ctx",
-      "to": "worker",
-      "label": "segment queued",
-      "variant": "default"
-    },
-    {
-      "id": "run",
-      "from": "worker",
-      "to": "crew",
-      "label": "run",
-      "variant": "emphasis"
-    },
-    {
-      "id": "model-call",
-      "from": "crew",
-      "to": "llm",
-      "label": "model call",
-      "variant": "emphasis",
-      "role": "branch"
-    },
-    {
-      "id": "record",
-      "from": "llm",
-      "to": "runs",
-      "label": "record first",
-      "variant": "dashed",
-      "role": "async"
-    },
-    {
-      "id": "tool-call",
-      "from": "crew",
-      "to": "gate",
-      "label": "tool call",
-      "variant": "security"
-    },
-    {
-      "id": "gated",
-      "from": "gate",
-      "to": "handoff",
-      "label": "never executed",
-      "variant": "security"
-    },
-    {
-      "id": "ask",
-      "from": "handoff",
-      "to": "human",
-      "label": "decide",
-      "variant": "emphasis"
-    },
-    {
-      "id": "resume",
-      "from": "human",
-      "to": "state",
-      "label": "approve → queue next segment",
-      "variant": "emphasis",
-      "role": "return",
-      "fromSide": "bottom",
-      "toSide": "bottom",
-      "route": "bottom-channel"
-    },
-    {
-      "id": "claim",
-      "from": "state",
-      "to": "worker",
-      "label": "claim segment",
-      "variant": "dashed",
-      "role": "async"
-    },
-    {
-      "id": "audited",
-      "from": "handoff",
-      "to": "audit",
-      "label": "audited",
-      "variant": "dashed",
-      "role": "async"
-    }
+    { "id": "enrich", "from": "api", "to": "ctx", "label": "enrich as user", "variant": "default" },
+    { "id": "queue", "from": "ctx", "to": "worker", "label": "segment queued", "variant": "default" },
+    { "id": "run", "from": "worker", "to": "crew", "label": "run", "variant": "emphasis" },
+    { "id": "model-call", "from": "crew", "to": "llm", "label": "model call", "variant": "emphasis", "role": "branch" },
+    { "id": "record", "from": "llm", "to": "runs", "label": "record first", "variant": "dashed", "role": "async" },
+    { "id": "tool-call", "from": "crew", "to": "gate", "label": "tool call", "variant": "security" },
+    { "id": "gated", "from": "gate", "to": "handoff", "label": "never executed", "variant": "security" },
+    { "id": "ask", "from": "handoff", "to": "human", "label": "decide", "variant": "emphasis" },
+    { "id": "resume", "from": "human", "to": "state", "label": "approve → queue next segment", "variant": "emphasis", "role": "return", "fromSide": "bottom", "toSide": "bottom", "route": "bottom-channel" },
+    { "id": "claim", "from": "state", "to": "worker", "label": "claim segment", "variant": "dashed", "role": "async" },
+    { "id": "audited", "from": "handoff", "to": "audit", "label": "audited", "variant": "dashed", "role": "async" },
+    { "id": "autonomy", "from": "eval", "to": "api", "label": "autonomy level", "variant": "dashed", "role": "async" }
   ],
   "cards": [
     {
@@ -310,15 +82,15 @@
       "title": "Who decides",
       "items": [
         "LLM: document class, figures, draft text, tool attempts",
-        "Code: roles, walls, gate, ₹5 Cr cap, 0.95 confidence, resume"
+        "Code: roles, walls, gate, ₹5 Cr cap, 0.95 confidence, injection screen, retries, autonomy"
       ]
     },
     {
       "dot": "rose",
-      "title": "Egress and gaps",
+      "title": "Egress and remaining gaps",
       "items": [
         "Events reach only the deal's wall over WebSocket",
-        "Gaps: no atomic claim, no stuck-run recovery, no eval loop"
+        "Gaps: per-process rate limit, single-host SQLite, local-only tracing, small golden sets"
       ]
     }
   ]
