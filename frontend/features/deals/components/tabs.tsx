@@ -16,6 +16,7 @@ import {
 } from "../api";
 import { CONDITION_STATUSES, CP_TYPES, DILIGENCE_STATUSES, PARTY_TYPES, ROLES, SCHEMES } from "../types";
 import type { DealDetail, DealDocument, DealParty, DiligenceItem, Finding } from "../types";
+import { PartyContacts } from "@/features/integrations/components/PartyContacts";
 import { DraftEmailSheet } from "./AgentActions";
 import { FindingsSection, RaiseFindingSheet } from "./Findings";
 import {
@@ -107,7 +108,8 @@ export function PartiesTab({ deal, onChanged }: { deal: DealDetail; onChanged: (
             {deal.parties.map((p, i) => {
               const full = byId.get(p.party_id);
               return (
-                <li key={`${p.party_id}-${p.role}-${i}`} className="flex h-12 items-center gap-3 border-b border-line-subtle px-4 last:border-0">
+                <li key={`${p.party_id}-${p.role}-${i}`} className="border-b border-line-subtle last:border-0">
+                  <div className="flex h-12 items-center gap-3 px-4">
                   <Avatar name={p.display_name} size={24} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13px] font-medium text-fg">{p.display_name}</div>
@@ -129,6 +131,8 @@ export function PartiesTab({ deal, onChanged }: { deal: DealDetail; onChanged: (
                       </IconButton>
                     </Tip>
                   </Permit>
+                  </div>
+                  <PartyContacts partyId={p.party_id} />
                 </li>
               );
             })}

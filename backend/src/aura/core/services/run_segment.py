@@ -24,6 +24,7 @@ from aura.core.ports.uow import UnitOfWork
 from aura.core.services.autonomy import ensure_enabled, level_of
 from aura.core.services.extractions import record_extraction
 from aura.core.services.handoffs import continue_job, create_handoff
+from aura.core.services.outbound import OutboundService
 from aura.core.services.segment_reliability import handle_segment_failure
 from aura.core.tracing import tracer
 
@@ -126,6 +127,7 @@ def run_segment(
     autonomy: AutonomyRepository | None = None,
     refresh_context: Callable[[dict], dict] | None = None,
     injection_threshold: float = DEFAULT_THRESHOLD,
+    outbound: OutboundService | None = None,
 ) -> str:
     """Run one segment to completion or to a gate. Never blocks on a human.
 
@@ -140,6 +142,11 @@ def run_segment(
     result is discarded ('stale_result_discarded'). Text that looked like a prompt injection
     forces a handoff (trigger 'untrusted_content', audited 'injection_suspected'). At autonomy
     level 1 a confident extraction also goes to a person.
+
+    Outbound email (`outbound`): a draft_email job resumed after its handoff was approved
+    runs the outbound step first (checks, then the Gmail MCP server; it commits its own rows so
+    nothing is locked while Gmail answers) and its outcome lands in the job's result. A
+    draft_email handoff is annotated with the recipient and what approving will do.
 
     A failure rolls the outcome back and is then classified (retry_policy): a transient one
     requeues the segment with backoff or, out of attempts, dead-letters it; anything else
@@ -157,14 +164,15 @@ def run_segment(
                      deal_id=job.deal_id) as span:
         outcome = _run(segment, job, orchestrator, jobs, segments, tasks, handoffs, audit,
                        events, runs, uow, materiality_cap_inr, extractions, documents,
-                       retry_policy, run_links, autonomy, refresh_context, injection_threshold)
+                       retry_policy, run_links, autonomy, refresh_context, injection_threshold,
+                       outbound)
         span.set("aura.outcome", outcome)
         return outcome
 
 
 def _run(segment, job, orchestrator, jobs, segments, tasks, handoffs, audit, events, runs, uow,
          materiality_cap_inr, extractions, documents, retry_policy, run_links, autonomy,
-         refresh_context, injection_threshold) -> str:
+         refresh_context, injection_threshold, outbound=None) -> str:
     now = utcnow()
     claimed_by, attempts = segment.claimed_by, segment.attempts
 
@@ -182,6 +190,10 @@ def _run(segment, job, orchestrator, jobs, segments, tasks, handoffs, audit, eve
         level = level_of(autonomy, capability)
         if level <= LEVEL_DISABLED and segment.seq == 1:
             ensure_enabled(autonomy, capability)  # raises CapabilityDisabled: permanent
+        # A person approved this job's email: the outbound step runs before anything else and
+        # is idempotent per handoff, so a retried segment never sends twice.
+        outbound_result = outbound.execute_after_approval(job) \
+            if outbound is not None and outbound.applies(segment) else None
         context = refresh_context(segment.context_in) if refresh_context is not None \
             else segment.context_in
         screening = context.get("screening") or {}
@@ -253,6 +265,8 @@ def _run(segment, job, orchestrator, jobs, segments, tasks, handoffs, audit, eve
                              "approved": decision in APPROVING_DECISIONS}))
                 continue_job(job.id, decision in APPROVING_DECISIONS, jobs, segments)
             else:
+                if outbound is not None:
+                    action = outbound.describe_draft(action)
                 trigger = HandoffTrigger.UNTRUSTED_CONTENT if untrusted \
                     else _trigger(action, materiality_cap_inr)
                 handoff = create_handoff(
@@ -272,7 +286,8 @@ def _run(segment, job, orchestrator, jobs, segments, tasks, handoffs, audit, eve
             segment.status = SegmentStatus.DONE
             segments.update(segment)
             job.status = JobStatus.COMPLETE
-            job.result = result.context_out
+            job.result = result.context_out if outbound_result is None \
+                else {**(result.context_out or {}), "outbound": outbound_result}
             jobs.update(job)
             audit.append(AuditEntry(id=None, job_id=job.id, deal_id=job.deal_id,
                                     actor="system", action="job_completed",

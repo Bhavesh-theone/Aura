@@ -23,7 +23,8 @@ def test_every_role_has_a_distinct_set_of_powers():
 
 
 def test_admin_has_no_deal_powers():
-    deal_powers = set(Capability) - {C.MANAGE_USERS, C.MANAGE_AUTONOMY}
+    # Viewing the Gmail connection status is configuration, not a deal power.
+    deal_powers = set(Capability) - {C.MANAGE_USERS, C.MANAGE_AUTONOMY, C.VIEW_INTEGRATIONS}
     assert not any(can(Role.ADMIN, cap) for cap in deal_powers)
 
 

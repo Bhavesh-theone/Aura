@@ -24,6 +24,10 @@ from aura.data.repositories.sql_deals import (SqlConditionRepository, SqlDealRep
                                               SqlStageHistoryRepository, SqlWallRepository)
 from aura.data.repositories.sql_harness import (SqlAutonomyRepository, SqlEvalRepository,
                                                 SqlNoteRepository, SqlTraceRepository)
+from aura.data.repositories.sql_outbound import (SqlContactRepository, SqlOutboundRepository,
+                                                 SqlSuppressionRepository)
+from aura.data.repositories.sql_outbound import (SqlContactRepository, SqlOutboundRepository,
+                                                 SqlSuppressionRepository)
 from aura.data.uow import SqlUnitOfWork
 from aura.data.verify_audit import default_anchor_path
 
@@ -210,3 +214,43 @@ def get_traces(s: Session = Depends(get_session),
 def get_anchor_path() -> Path | None:
     """Where the audit anchor lives; tests override this to a temporary file."""
     return default_anchor_path()
+
+
+def get_contacts(s: Session = Depends(get_session)) -> SqlContactRepository:
+    """Firm-wide, like parties."""
+    return SqlContactRepository(s)
+
+
+def get_suppressions(s: Session = Depends(get_session)) -> SqlSuppressionRepository:
+    return SqlSuppressionRepository(s)
+
+
+def get_outbound(s: Session = Depends(get_session),
+                 user: User = Depends(current_user)) -> SqlOutboundRepository:
+    return SqlOutboundRepository(s, user.username)
+
+
+def get_mailer_status():
+    """The Gmail connection as stored locally (no network). Tests override this."""
+    from aura.agents.gmail_mailer import McpGmailMailer
+    return McpGmailMailer().status()
+
+
+def get_contacts(s: Session = Depends(get_session)) -> SqlContactRepository:
+    """Firm-wide, like parties."""
+    return SqlContactRepository(s)
+
+
+def get_suppressions(s: Session = Depends(get_session)) -> SqlSuppressionRepository:
+    return SqlSuppressionRepository(s)
+
+
+def get_outbound(s: Session = Depends(get_session),
+                 user: User = Depends(current_user)) -> SqlOutboundRepository:
+    return SqlOutboundRepository(s, user.username)
+
+
+def get_mailer_status():
+    """The Gmail connection as stored locally (no network, no token). Tests override it."""
+    from aura.agents.gmail_mailer import McpGmailMailer
+    return McpGmailMailer().status()

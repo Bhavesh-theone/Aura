@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from aura.api.schemas.harness import EvaluationMetricsOut, SecurityMetricsOut
+from aura.api.schemas.outbound import OutboundMetricsOut
 from pydantic import BaseModel, Field
 
 from aura.core.domain.enums import (CPStatus, CriterionHardness, CriterionOperator, DealStage,
@@ -307,4 +308,13 @@ class MetricsOut(BaseModel):
     # Harness evaluation and security (migration 0012).
     evaluation: EvaluationMetricsOut | None = None
     security: SecurityMetricsOut | None = None
+    # Outbound email (migration 0013).
+    outbound: OutboundMetricsOut | None = None
+    # Outbound email (migration 0013).
+    outbound: "OutboundMetricsOut | None" = None
 
+
+
+from aura.api.schemas.outbound import OutboundMetricsOut  # noqa: E402
+
+MetricsOut.model_rebuild()

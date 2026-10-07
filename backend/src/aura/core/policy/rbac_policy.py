@@ -21,18 +21,27 @@ class Capability(str, Enum):
     VERIFY_EXTRACTION = "verify_extraction"
     MANAGE_USERS = "manage_users"
     MANAGE_AUTONOMY = "manage_autonomy"        # promote a demoted capability
+    # Outbound email (migration 0013).
+    VIEW_CONTACTS = "view_contacts"
+    MANAGE_CONTACTS = "manage_contacts"        # add and remove a party's email contacts
+    VERIFY_CONTACT = "verify_contact"          # vouch that an address really is the party's
+    MANAGE_SUPPRESSION = "manage_suppression"  # the do-not-contact list
+    VIEW_INTEGRATIONS = "view_integrations"    # Gmail connection status (never a token)
 
 
 _C = Capability
-_DEAL_WORK = {_C.CREATE_DEAL, _C.EDIT_DEAL_DATA, _C.SUBMIT_JOB, _C.VERIFY_EXTRACTION}
+_DEAL_WORK = {_C.CREATE_DEAL, _C.EDIT_DEAL_DATA, _C.SUBMIT_JOB, _C.VERIFY_EXTRACTION,
+              _C.VIEW_CONTACTS, _C.MANAGE_CONTACTS}
 
 _GRANTS: dict[Role, frozenset[Capability]] = {
-    Role.ADMIN: frozenset({_C.MANAGE_USERS, _C.MANAGE_AUTONOMY}),
+    Role.ADMIN: frozenset({_C.MANAGE_USERS, _C.MANAGE_AUTONOMY, _C.VIEW_INTEGRATIONS}),
     Role.DEALMAKER: frozenset(_DEAL_WORK | {_C.TRANSITION_DEAL, _C.RESOLVE_HANDOFF,
-                                            _C.EDIT_REGULATORY_FLAGS}),
+                                            _C.EDIT_REGULATORY_FLAGS, _C.VERIFY_CONTACT,
+                                            _C.MANAGE_SUPPRESSION, _C.VIEW_INTEGRATIONS}),
     Role.ANALYST: frozenset(_DEAL_WORK),
     Role.COMPLIANCE: frozenset({_C.RESOLVE_POLICY_HANDOFF, _C.MANAGE_WALL, _C.SIGN_OFF,
-                                _C.EDIT_REGULATORY_FLAGS, _C.OVERRIDE_OWN_GUARDS}),
+                                _C.EDIT_REGULATORY_FLAGS, _C.OVERRIDE_OWN_GUARDS,
+                                _C.VIEW_CONTACTS, _C.MANAGE_SUPPRESSION}),
 }
 
 

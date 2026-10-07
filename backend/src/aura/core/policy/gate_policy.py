@@ -9,6 +9,10 @@ TOOL_CATEGORIES: dict[str, ActionCategory] = {
     "draft_email": ActionCategory.OUTBOUND,
     "send_whatsapp": ActionCategory.OUTBOUND,
     "send_linkedin_message": ActionCategory.OUTBOUND,
+    # The Gmail MCP server's tools (aura.mcp.servers.gmail_server). The crew is never given
+    # them; they are mapped so that anything reaching them through a gate is held.
+    "create_gmail_draft": ActionCategory.OUTBOUND,
+    "send_gmail": ActionCategory.OUTBOUND,
     "create_invoice": ActionCategory.MONEY,
     "issue_refund": ActionCategory.MONEY,
     "record_payment": ActionCategory.MONEY,

@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Bot, Gauge, Briefcase, Inbox, LayoutGrid, UserCog, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Bot, Gauge, Briefcase, Inbox, LayoutGrid, UserCog, Plug, MailX, type LucideIcon } from "lucide-react";
 
 export type NavItem = {
   href: string;
@@ -19,6 +19,8 @@ export const navItems: NavItem[] = [
   { href: "/jobs", label: "Agent jobs", shortcut: "g j", Icon: Bot, group: "automation" },
   { href: "/quality", label: "Agent quality", shortcut: "g q", Icon: Gauge, group: "automation" },
   { href: "/admin/users", label: "Users", shortcut: "g u", Icon: UserCog, group: "admin", roles: ["admin"] },
+  { href: "/settings/integrations", label: "Integrations", shortcut: "g i", Icon: Plug, group: "admin", roles: ["admin", "dealmaker"] },
+  { href: "/settings/suppression", label: "Suppression list", shortcut: "g s", Icon: MailX, group: "admin", roles: ["dealmaker", "compliance"] },
 ];
 
 export const visibleNav = (role: string | undefined) => navItems.filter((n) => !n.roles || (role && n.roles.includes(role)));

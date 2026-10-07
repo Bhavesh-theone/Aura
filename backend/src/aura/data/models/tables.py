@@ -12,6 +12,7 @@ from aura.core.domain.enums import (AssignmentMode, ChecklistLayer, CPStatus,
                                     HandoffTrigger, IdentifierScheme, JobStatus, MandateSide,
                                     MandateStatus, Outcome, PartyRole, PartyType, Role,
                                     SegmentStatus, TaskStatus, TransactionClass)
+from aura.core.domain.outbound import OutboundMode, OutboundStatus, SuppressionKind
 from aura.core.policy.stage_policy import TERMINAL_STAGES
 from aura.data.engine import Base
 from aura.data.triggers import APPEND_ONLY_TABLES, append_only_ddl
@@ -557,6 +558,65 @@ class DealNoteRow(Base):
     source: Mapped[str] = mapped_column(String(32))
     job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+# Mirrors aura.core.policy.email_policy (which lower-cases and validates first): stored
+# addresses are lower-case, have one @ and a dot in the domain, and no spaces.
+EMAIL_FORMAT_CHECK = ("email = lower(email) AND email LIKE '%_@_%._%' "
+                      "AND email NOT LIKE '% %' AND email NOT LIKE '%@%@%'")
+
+
+class PartyContactRow(Base):
+    """An email contact of a party (migration 0013). Unverified until a dealmaker vouches."""
+    __tablename__ = "party_contact"
+    __table_args__ = (UniqueConstraint("party_id", "email", name="uq_party_contact_email"),
+                      CheckConstraint(EMAIL_FORMAT_CHECK, name="ck_party_contact_email"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    party_id: Mapped[int] = mapped_column(ForeignKey("party.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200), default="")
+    email: Mapped[str] = mapped_column(String(254))
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SuppressionRow(Base):
+    """Do-not-contact list: an address or a whole domain (migration 0013)."""
+    __tablename__ = "suppression"
+    __table_args__ = (UniqueConstraint("kind", "value", name="uq_suppression_kind_value"),
+                      _one_of("kind", SuppressionKind))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(8))
+    value: Mapped[str] = mapped_column(String(254))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class OutboundMessageRow(Base):
+    """One approved email's trip out of Aura (migration 0013). At most one per handoff: the
+    unique key is what makes a retried or resumed segment unable to send twice."""
+    __tablename__ = "outbound_message"
+    __table_args__ = (_one_of("mode", OutboundMode), _one_of("status", OutboundStatus))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    handoff_id: Mapped[int] = mapped_column(ForeignKey("handoff.id"), unique=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), nullable=True)
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), nullable=True,
+                                                index=True)
+    party_id: Mapped[int | None] = mapped_column(ForeignKey("party.id"), nullable=True)
+    to_email: Mapped[str] = mapped_column(String(254))
+    subject: Mapped[str] = mapped_column(String(500), default="")
+    mode: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16))
+    gmail_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    gmail_thread_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                          nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 # create_all installs the same append-only triggers the migration does.

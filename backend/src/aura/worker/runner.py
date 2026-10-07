@@ -20,6 +20,9 @@ from aura.core.services.notifying_audit import NotifyingAudit
 from aura.core.services.handoffs import escalate_overdue
 from aura.core.services.autonomy import DemotionRules, apply_demotions
 from aura.core.services.context_assembly import ContextLimits, assemble_context
+from aura.core.domain.outbound import OutboundMode
+from aura.core.ports.mailer import OutboundMailer
+from aura.core.services.outbound import OutboundService, OutboundSettings
 from aura.core.services.run_segment import run_segment
 from aura.core.services.segment_reliability import (defer_for_budget, recover_stale_segments,
                                                     start_of_utc_day)
@@ -30,7 +33,10 @@ from aura.data.repositories.sql_harness import SqlAutonomyRepository, SqlEvalRep
 from aura.data.repositories.sql import (SqlAgentRunRepository, SqlAuditRepository,
                                         SqlHandoffRepository, SqlJobRepository,
                                         SqlSegmentRepository, SqlTaskRepository)
-from aura.data.repositories.sql_deals import SqlDocumentRepository, SqlExtractionRepository
+from aura.data.repositories.sql_deals import (SqlDocumentRepository, SqlExtractionRepository,
+                                              SqlWallRepository)
+from aura.data.repositories.sql_outbound import (SqlContactRepository, SqlOutboundRepository,
+                                                 SqlSuppressionRepository)
 from aura.data.run_sink import SqlAgentRunSink
 from aura.data.uow import SqlUnitOfWork
 from aura.data.verify_audit import default_anchor_path, refresh_anchor
@@ -63,6 +69,24 @@ def retry_policy() -> RetryPolicy:
 def store_factory():
     """Where document text is read from (tests point this at their temporary store)."""
     return LocalFileStore()
+
+
+def mailer_factory() -> OutboundMailer:
+    """The Gmail mailer (MCP over stdio). Tests swap it for an in-process fake."""
+    from aura.agents.gmail_mailer import McpGmailMailer
+    return McpGmailMailer()
+
+
+def outbound_service(session: Session, audit, events, uow) -> OutboundService:
+    """The outbound step for one segment, acting as SYSTEM on decisions already made."""
+    s = get_settings()
+    return OutboundService(
+        settings=OutboundSettings(mode=OutboundMode(s.outbound_mode),
+                                  daily_limit=s.outbound_daily_limit),
+        contacts=SqlContactRepository(session), suppressions=SqlSuppressionRepository(session),
+        messages=SqlOutboundRepository(session, SYSTEM),
+        handoffs=SqlHandoffRepository(session, SYSTEM), walls=SqlWallRepository(session, SYSTEM),
+        audit=audit, events=events, mailer=mailer_factory(), uow=uow)
 
 
 def context_limits() -> ContextLimits:
@@ -166,6 +190,7 @@ def run_once(session: Session, orchestrator: Orchestrator | OrchestratorSelector
             autonomy=SqlAutonomyRepository(session),
             refresh_context=refresh,
             injection_threshold=settings.injection_risk_threshold,
+            outbound=outbound_service(session, audit, events, uow),
         )
         if outcome in ("retry", "dead_letter") and hasattr(orchestrator, "invalidate"):
             orchestrator.invalidate()  # the model may be gone: check again next segment

@@ -1,3 +1,4 @@
+import { blockReason } from "@/features/integrations/api";
 import { formatINRCompact, humanize, stageLabel } from "@/shared/lib/format";
 import type { ActivityEntry } from "./types";
 
@@ -19,7 +20,8 @@ export const AUDIT_ACTIONS = [
   "document_uploaded", "document_downloaded", "document_viewed", "document_updated",
   "mandate_created", "party_created", "party_linked",
   "handoff_created", "handoff_resolved", "handoff_rejected", "handoff_escalated", "handoff_skipped_per_directive",
-  "outbound_executed",
+  "outbound_executed", "outbound_blocked", "outbound_failed",
+  "contact_added", "contact_removed", "contact_verified", "suppression_added", "suppression_removed",
   "job_submitted", "job_completed", "segment_failed",
   "segment_retry_scheduled", "segment_dead_lettered", "segment_recovered", "segment_retried",
   "budget_deferred", "orchestrator_fallback", "stale_result_discarded",
@@ -50,6 +52,7 @@ const decisions = (p: Payload): ActivityLink => ({
 });
 const job = (e: ActivityEntry): ActivityLink => ({ href: e.job_id ? `/jobs?job=${e.job_id}` : "/jobs", label: e.job_id ? `JOB-${e.job_id}` : "Agent jobs" });
 const users: ActivityLink = { href: "/admin/users", label: "Users" };
+const suppressionLink: ActivityLink = { href: "/settings/suppression", label: "Suppression list" };
 
 type Spec = {
   verb: string | ((p: Payload) => string);
@@ -123,10 +126,42 @@ const SPEC: Record<AuditAction, Spec> = {
     tone: "neutral",
     link: (e) => (e.job_id ? job(e) : decisions(e.payload)),
   },
-  outbound_executed: {
-    verb: (p) => (str(p.tool) ? `executed an outbound action (${p.tool})` : "executed an outbound action"),
+    outbound_executed: {
+    verb: (p) => {
+      const to = str(p.to);
+      return p.kind === "send"
+        ? `sent an email via Gmail${to ? ` to ${to}` : ""}`
+        : p.kind === "draft"
+          ? `created a Gmail draft${to ? ` to ${to}` : ""}`
+          : str(p.tool)
+            ? `executed an outbound action (${p.tool})`
+            : "executed an outbound action";
+    },
+    tone: (p) => (p.kind === "send" ? "danger" : "accent"),
+    link: (e) => (typeof e.payload.handoff_id === "number" ? decisions(e.payload) : e.job_id ? job(e) : dealTab(e)),
+  },
+  outbound_blocked: {
+    verb: (p) => `blocked an outbound email${str(p.reason) ? `: ${blockReason(str(p.reason)!)}` : ""}`,
+    tone: "warning",
+    link: (e) => decisions(e.payload),
+  },
+  outbound_failed: {
+    verb: (p) => `failed to deliver an outbound email${str(p.error) ? `: ${p.error}` : ""}`,
     tone: "danger",
-    link: (e) => (e.job_id ? job(e) : dealTab(e)),
+    link: (e) => decisions(e.payload),
+  },
+  contact_added: { verb: (p) => (str(p.email) ? `added the contact ${p.email}` : "added a contact"), tone: "info", link: (e) => dealTab(e, "parties") },
+  contact_removed: { verb: (p) => (str(p.email) ? `removed the contact ${p.email}` : "removed a contact"), tone: "warning", link: (e) => dealTab(e, "parties") },
+  contact_verified: { verb: (p) => (str(p.email) ? `verified the email ${p.email}` : "verified a contact email"), tone: "success", link: (e) => dealTab(e, "parties") },
+  suppression_added: {
+    verb: (p) => (str(p.value) ? `suppressed ${p.kind === "domain" ? "the domain" : "the email"} ${p.value}` : "added a suppression"),
+    tone: "warning",
+    link: () => suppressionLink,
+  },
+  suppression_removed: {
+    verb: (p) => (str(p.value) ? `lifted the suppression on ${p.value}` : "removed a suppression"),
+    tone: "info",
+    link: () => suppressionLink,
   },
   job_submitted: { verb: "submitted an agent job", tone: "info", link: job },
   job_completed: { verb: "completed an agent job", tone: "success", link: job },
@@ -214,7 +249,7 @@ export function linkFor(entry: ActivityEntry): ActivityLink | null {
 export const isRejection = (action: string, payload: Payload) => action === "handoff_resolved" && payload.approved === false;
 
 /** Shown in the verb or link already, or not useful in a fact row. */
-const HIDDEN_KEYS = new Set(["approved", "handoff_id", "resolved_by", "sha256", "argument_names", "trace_id", "span_id"]);
+const HIDDEN_KEYS = new Set(["approved", "handoff_id", "resolved_by", "sha256", "argument_names", "trace_id", "span_id", "outbound_id", "party_id", "contact_id", "suppression_id"]);
 
 /** Trace id carried by audit rows written inside a span, if any. */
 export const traceIdFor = (payload: Payload): string | null => str(payload.trace_id) || null;
@@ -238,6 +273,7 @@ export function payloadFacts(payload: Payload): { key: string; value: string; mo
       if ((k === "from" || k === "to") && Array.isArray(v)) return { key: humanize(k), value: v.length ? v.join(", ") : "none" };
       if (Array.isArray(v)) return { key: humanize(k), value: v.length ? v.map(listItem).join(", ") : "none", mono: true };
       if (typeof v === "number" && /(_inr|amount|fee|total|impact)$/i.test(k)) return { key: humanize(k.replace(/_inr$/i, "")), value: formatINRCompact(v), mono: true };
+      if (k === "reason" && typeof v === "string" && /^[a-z]+(_[a-z]+)+$/.test(v)) return { key: "Reason", value: humanize(v) };
       if (typeof v === "number" || /(_id|hash)$/i.test(k)) return { key: humanize(k), value: String(v), mono: true };
       if (typeof v === "boolean") return { key: humanize(k), value: v ? "Yes" : "No" };
       if (typeof v === "object") return { key: humanize(k), value: JSON.stringify(v), mono: true };

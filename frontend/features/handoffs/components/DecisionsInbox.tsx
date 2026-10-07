@@ -17,6 +17,7 @@ import type { Deal } from "@/features/deals/types";
 import { useAuth } from "@/features/auth/hooks";
 import { canResolve, roleLabel, whoCanResolve } from "@/features/auth/roles";
 import { getJob } from "@/features/jobs/api";
+import { DraftRecipientPanel, OutboundResult, isDraftEmail, isRecipientEvidence } from "@/features/integrations/components/OutboundPanels";
 import { EvidenceList, show } from "./Evidence";
 import { isEscalated, listHandoffs, listResolvedHandoffs, resolveHandoff, type Handoff, type HandoffOption } from "../api";
 
@@ -233,6 +234,7 @@ function HandoffDetail({ handoff, deal, onResolved }: { handoff: Handoff; deal?:
   const ctx = handoff.context_package ?? {};
   const dr = ctx.decision_required;
   const idn = ctx.if_you_do_nothing;
+  const evidenceItems = isDraftEmail(handoff) ? (ctx.evidence ?? []).filter((ev) => !isRecipientEvidence(ev)) : (ctx.evidence ?? []);
   const escalated = isEscalated(handoff);
   const esc = escalated ? null : escalateAt(handoff);
   const [decision, setDecision] = useState("");
@@ -410,6 +412,8 @@ function HandoffDetail({ handoff, deal, onResolved }: { handoff: Handoff; deal?:
         </section>
       ) : null}
 
+      {isDraftEmail(handoff) ? <DraftRecipientPanel handoff={handoff} /> : null}
+
       {/* Options */}
       {dr ? (
         <fieldset className="mt-8">
@@ -458,7 +462,7 @@ function HandoffDetail({ handoff, deal, onResolved }: { handoff: Handoff; deal?:
       ) : null}
 
       {/* Context */}
-      {(ctx.what_happened?.length || ctx.evidence?.length) ? (
+      {(ctx.what_happened?.length || evidenceItems.length) ? (
         <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2">
           {ctx.what_happened?.length ? (
             <section>
@@ -473,10 +477,10 @@ function HandoffDetail({ handoff, deal, onResolved }: { handoff: Handoff; deal?:
               </ol>
             </section>
           ) : null}
-          {ctx.evidence?.length ? (
+          {evidenceItems.length ? (
             <section>
               <h2 className="mb-2.5 text-[12px] font-medium text-fg-2">Evidence</h2>
-              <EvidenceList items={ctx.evidence} dealId={handoff.deal_id} />
+              <EvidenceList items={evidenceItems} dealId={handoff.deal_id} />
             </section>
           ) : null}
         </div>
@@ -603,6 +607,7 @@ function ResolvedDetail({ handoff, deal }: { handoff: Handoff; deal?: Deal }) {
           ))}
         </dl>
       </section>
+      {isDraftEmail(handoff) && !rejected ? <OutboundResult handoffId={handoff.id} /> : null}
     </article>
   );
 }

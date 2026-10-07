@@ -71,8 +71,10 @@ def test_metrics_payload_for_a_deal_closed_end_to_end(api):
     submit(api, {"brief": "x"}, deal_id=d)
     run_worker(api)
     m = api.call("GET", "/api/metrics").json()
-    # reliability: added in 0011; evaluation and security: added in 0012
-    assert set(m) == {"stage_dwell", "success", "reliability", "evaluation", "security"}
+    # reliability: added in 0011; evaluation and security: added in 0012; outbound: 0013
+    assert set(m) == {"stage_dwell", "success", "reliability", "evaluation", "security",
+                      "outbound"}
+    assert m["outbound"]["outbound_without_approval"] == 0
     assert m["reliability"] == {"dead_lettered_segments": 0, "retried_segments": 0,
                                 "recovered_segments": 0, "fallback_runs": 0,
                                 "budget_deferrals": 0}

@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -75,6 +76,17 @@ class Settings(BaseSettings):
 
     # Local tracing (spans in the trace_span table; nothing is exported).
     tracing_enabled: bool = True
+
+    # Outbound email (RUNNING.md, "Gmail (outbound email)"). Set in .env / the environment
+    # only, never through the API: 'off' (default, nothing leaves), 'gmail_draft' (an approved
+    # email becomes a Gmail draft) or 'gmail_send' (an approved email is sent).
+    outbound_mode: Literal["off", "gmail_draft", "gmail_send"] = "off"
+    # Outbound messages (drafted or sent, not blocked) allowed per UTC day.
+    outbound_daily_limit: int = 50
+    # The Google OAuth Desktop client (never committed; see .gitignore).
+    gmail_client_secret_path: str = str(BACKEND_DIR / "client_secret.json")
+    # Used only when no OS keyring is available: the encrypted token file and its key.
+    gmail_token_file: str = str(BACKEND_DIR / "data" / "gmail_token.enc")
 
 
 @lru_cache

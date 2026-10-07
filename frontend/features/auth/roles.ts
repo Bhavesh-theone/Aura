@@ -26,6 +26,10 @@ export type Action =
   | "signoff" // compliance sign-off on flagged deals
   | "editFlags" // regulatory flags
   | "manageUsers" // admin › users
+  | "manageContacts" // add / remove a party's email contacts
+  | "verifyContact" // mark a contact email as verified (outbound needs it)
+  | "manageSuppression" // outbound suppression list
+  | "viewIntegrations" // settings › integrations
   | "work"; // analyst work: documents, diligence, conditions, findings, parties, mandates, agent jobs
 
 const MATRIX: Record<Action, Role[]> = {
@@ -36,6 +40,10 @@ const MATRIX: Record<Action, Role[]> = {
   signoff: ["compliance"],
   editFlags: ["dealmaker", "compliance"],
   manageUsers: ["admin"],
+  manageContacts: ["dealmaker", "analyst"],
+  verifyContact: ["dealmaker"],
+  manageSuppression: ["dealmaker", "compliance"],
+  viewIntegrations: ["admin", "dealmaker"],
   // EDIT_DEAL_DATA (core/policy/rbac_policy.py): dealmakers and analysts.
   work: ["analyst", "dealmaker"],
 };
@@ -49,6 +57,10 @@ export const WHO_CAN: Record<Action, string> = {
   signoff: "Only compliance can sign off.",
   editFlags: "Only dealmakers and compliance can edit regulatory flags.",
   manageUsers: "Only admins can manage users.",
+  manageContacts: "Only dealmakers and analysts can change contacts.",
+  verifyContact: "Only dealmakers can verify an email.",
+  manageSuppression: "Only dealmakers and compliance can change the suppression list.",
+  viewIntegrations: "Only admins and dealmakers can see integrations.",
   work: "Only analysts and dealmakers can do this.",
 };
 

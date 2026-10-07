@@ -3,7 +3,9 @@ from datetime import datetime, timedelta, timezone
 
 from aura.core.domain.enums import ActionCategory
 from aura.core.domain.errors import RuleViolation
+from aura.core.domain.outbound import OutboundMode
 from aura.core.domain.segment import ProposedAction
+from aura.core.policy.outbound_policy import APPROVE_CONSEQUENCES, APPROVE_LABELS
 from aura.core.policy.gate_policy import (DEFAULT_MATERIALITY_CAP_INR, exceeds_materiality,
                                           recommendation)
 
@@ -114,6 +116,19 @@ def _options_for(action: ProposedAction) -> list[dict]:
             {"id": "discard", "label": "Discard it", "reversible": True,
              "consequence": "The extraction stays on record but never feeds a valuation."},
         ]
+    if action.tool == "draft_email" and action.arguments.get("outbound_mode"):
+        # Annotated by the outbound service: the label says what approving will do.
+        try:
+            mode = OutboundMode(action.arguments["outbound_mode"])
+        except ValueError:
+            mode = OutboundMode.OFF
+        return [
+            {"id": "approve", "label": APPROVE_LABELS[mode],
+             "reversible": mode is not OutboundMode.GMAIL_SEND,
+             "consequence": APPROVE_CONSEQUENCES[mode]},
+            {"id": "reject", "label": "Reject", "reversible": True,
+             "consequence": "The job ends here and the draft is discarded. Nothing is sent."},
+        ]
     return [
         {"id": "approve", "label": "Approve", "reversible": False,
          "consequence": "The job continues with this action. Nothing is sent automatically."},
@@ -127,6 +142,16 @@ def _confidence(action: ProposedAction) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1:
         return float(value)
     return 0.5
+
+
+def _recipient(action: ProposedAction) -> dict | None:
+    """Where an annotated draft_email would go, and what approving it does."""
+    if action.tool != "draft_email" or not action.arguments.get("outbound_mode"):
+        return None
+    return {"email": action.arguments.get("to_email"),
+            "verified": bool(action.arguments.get("to_email_verified")),
+            "mode": action.arguments.get("outbound_mode"),
+            "action_label": action.arguments.get("approve_label")}
 
 
 # For a result built on suspicious text, the policy recommends the option that changes nothing.
@@ -168,6 +193,14 @@ def build_gate_package(action: ProposedAction, now: datetime,
             f"{', '.join(untrusted.get('matched_rules') or []) or 'none'}), so a person must "
             "check the result before anything uses it.")
     what_happened.extend(notes or [])
+    recipient = _recipient(action)
+    if recipient is not None and recipient["mode"] != OutboundMode.OFF.value:
+        if not recipient["email"]:
+            what_happened.append("The party has no primary email contact: approving will "
+                                 "record a block and nothing will be sent.")
+        elif not recipient["verified"]:
+            what_happened.append(f"{recipient['email']} is not verified yet: approving will "
+                                 "record a block unless a dealmaker verifies it first.")
     return {
         "what_happened": what_happened,
         "evidence": [{"type": "proposed_action", "tool": action.tool,
@@ -175,6 +208,7 @@ def build_gate_package(action: ProposedAction, now: datetime,
                      *([{"type": "additional_gated_attempts",
                          "additional_gated_attempts": action.additional_gated_attempts}]
                        if action.additional_gated_attempts else []),
+                     *([{"type": "recipient", **recipient}] if recipient else []),
                      *([{"type": "untrusted_content",
                          "risk_score": untrusted.get("risk_score"),
                          "matched_rules": untrusted.get("matched_rules") or [],

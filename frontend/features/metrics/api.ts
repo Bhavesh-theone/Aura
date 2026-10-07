@@ -34,12 +34,23 @@ export type AutonomyLevel = { capability: string; level: number; reason: string 
 export type EvaluationMetrics = { latest_runs: LatestEval[]; override_rate: OverrideRate[]; autonomy: AutonomyLevel[] };
 export type SecurityMetrics = { injection_suspected: number; untrusted_content_handoffs: number };
 
+export type OutboundMetrics = {
+  mode: "off" | "gmail_draft" | "gmail_send";
+  drafted: number;
+  sent: number;
+  blocked: number;
+  failed: number;
+  blocked_by_reason: Record<string, number>;
+  outbound_without_approval: number;
+};
+
 export type Metrics = {
   stage_dwell: StageDwell[];
   success: SuccessMetrics;
   reliability?: ReliabilityMetrics | null;
   evaluation?: EvaluationMetrics | null;
   security?: SecurityMetrics | null;
+  outbound?: OutboundMetrics | null;
 };
 
 export const getMetrics = () => apiFetch<Metrics>("/api/metrics");

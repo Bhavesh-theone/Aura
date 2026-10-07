@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session
 
 from aura.api.deps import (current_user, get_agent_runs, get_anchor_path, get_autonomy,
                            get_deals, get_evals, get_guards, get_handoffs, get_history,
-                           get_plain_audit, get_session)
+                           get_outbound, get_plain_audit, get_session)
+from aura.api.schemas.outbound import OutboundMetricsOut
+from aura.config import get_settings
+from aura.core.domain.outbound import OutboundMode
+from aura.core.services.outbound import outbound_metrics
 from aura.api.schemas.harness import EvaluationMetricsOut, SecurityMetricsOut
 from aura.core.services.harness_metrics import evaluation_metrics, security_metrics
 from aura.api.schemas.deals import (MetricsOut, ReliabilityMetricsOut, StageDwellOut,
@@ -23,6 +27,7 @@ def metrics(user: User = Depends(current_user), s: Session = Depends(get_session
             guards=Depends(get_guards), runs=Depends(get_agent_runs),
             audit=Depends(get_plain_audit), handoffs=Depends(get_handoffs),
             evals=Depends(get_evals), autonomy=Depends(get_autonomy),
+            messages=Depends(get_outbound),
             anchor_path: Path | None = Depends(get_anchor_path)):
     """Wall-filtered. Stage dwell comes only from deal_stage_history (completed stays).
     guarded_forward_transitions_pct (SM1) is defined over forward moves: regressions and
@@ -40,5 +45,7 @@ def metrics(user: User = Depends(current_user), s: Session = Depends(get_session
             deals_closed_end_to_end=m.deals_closed_end_to_end),
         reliability=ReliabilityMetricsOut(**vars(m.reliability)) if m.reliability else None,
         evaluation=EvaluationMetricsOut(**vars(evaluation_metrics(evals, autonomy, handoffs))),
-        security=SecurityMetricsOut(**vars(security_metrics(audit, handoffs))))
+        security=SecurityMetricsOut(**vars(security_metrics(audit, handoffs))),
+        outbound=OutboundMetricsOut(**vars(outbound_metrics(
+            messages, handoffs, audit, OutboundMode(get_settings().outbound_mode)))))
 

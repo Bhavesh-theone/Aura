@@ -44,7 +44,7 @@ That creates `.venv/` and installs everything from `uv.lock`. The `.env` file is
 
 ### Database migrations (Alembic)
 
-The schema is versioned in `backend/migrations/versions/` (`0001` baseline through `0012_harness_eval_obs`). **You normally do nothing:** the API runs `alembic upgrade head` on every start, so an existing `backend/aura.db` is upgraded in place (its approvals become handoffs, existing deals get a wall with their owner on it, `member` users become analysts, the admin user `bhavesh` becomes a dealmaker, documents get version rows, checklist items are grouped under templates). `0009` refuses to run, changing nothing, if a stored identifier is malformed: fix the named rows first. To drive it by hand:
+The schema is versioned in `backend/migrations/versions/` (`0001` baseline through `0013_outbound_email`). **You normally do nothing:** the API runs `alembic upgrade head` on every start, so an existing `backend/aura.db` is upgraded in place (its approvals become handoffs, existing deals get a wall with their owner on it, `member` users become analysts, the admin user `bhavesh` becomes a dealmaker, documents get version rows, checklist items are grouped under templates). `0009` refuses to run, changing nothing, if a stored identifier is malformed: fix the named rows first. To drive it by hand:
 
 ```bash
 cd backend
@@ -210,6 +210,47 @@ Every model call (and every stub run) is recorded in `agent_run`, readable at `G
 
 Gated tool calls the crew attempts on the way (for example `send_email` during a `draft_email` job) are not dropped: they appear in the handoff's `evidence` as `{"type": "additional_gated_attempts", ...}`. None of them ran.
 
+### Gmail (outbound email)
+
+Aura can turn an **approved** `draft_email` into a Gmail draft (default once enabled) or, if you choose, send it. It is **off** until you connect Gmail and switch it on. Agents never send: the crew has no Gmail tool at all, and the email only leaves after a dealmaker approves the draft in Decisions.
+
+**1. Google Cloud console (one time).** In a Google Cloud project: *APIs & Services → Enable APIs* → enable the **Gmail API**. *OAuth consent screen*: User type **External**, publishing status **Testing**, add your Gmail address under **Test users**, and add the scope `https://www.googleapis.com/auth/gmail.compose` (add `gmail.send` only if you will use send mode). *Credentials → Create credentials → OAuth client ID → Desktop app*, download the JSON and save it as **`backend/client_secret.json`** (or point `AURA_GMAIL_CLIENT_SECRET_PATH` at it). It is git-ignored (`client_secret*.json`, `*gmail_token*`); never commit or paste it.
+
+**2. Connect** (opens your browser; sign in as the test user and allow):
+
+```bash
+cd backend
+uv run python -m aura.mcp.gmail_auth                       # connect with gmail.compose
+uv run python -m aura.mcp.gmail_auth --scopes compose,send # only if you want send mode
+uv run python -m aura.mcp.gmail_auth --status              # connected account, scopes, expiry (never a token)
+uv run python -m aura.mcp.gmail_auth --revoke              # revoke at Google and forget the token
+```
+
+The token is kept in the **OS keyring** (Windows Credential Manager, service `aura-gmail`). Only if no keyring backend exists does it fall back to an encrypted file (`backend/data/gmail_token.enc`, key beside it), and the command says so.
+
+**3. Switch it on.** The mode is set **only in `backend/.env`** (or the environment), never through the API, so turning email on needs access to the server:
+
+```bash
+AURA_OUTBOUND_MODE=gmail_draft   # off (default) | gmail_draft | gmail_send
+AURA_OUTBOUND_DAILY_LIMIT=50     # drafted + sent per UTC day
+```
+
+Restart the backend after changing it. **Settings › Integrations** in the portal (admin, dealmaker) shows the connection, the mode and the exact command to connect; `GET /api/integrations/gmail` returns the same (no tokens).
+
+**4. Try it.** On a deal's **Parties** tab add the party's email and mark it primary (dealmaker or analyst), then **Verify** it (dealmaker). Run a `draft_email` job for that party. In **Decisions** the card shows the recipient and what approving does ("Approve → create Gmail draft"). Approve it: within a few seconds the worker creates the draft and the card shows **Gmail draft created ↗** (opens your Gmail drafts). Activity records `outbound_executed`; Metrics shows it under *Outbound email*.
+
+**Testing-mode tokens expire after 7 days.** Google expires refresh tokens of apps in Testing mode after a week. When a refresh fails Aura marks the connection *Reconnect needed* (Integrations page, `--status`), blocks outbound with reason `gmail_reconnect_needed`, and you run the connect command again.
+
+**Safety model.**
+- The agent cannot send: `create_gmail_draft` and `send_gmail` are mapped OUTBOUND in `gate_policy`, and they are not among the crew's tools at all. They live on a separate MCP server (`aura.mcp.servers.gmail_server`) that only the worker's outbound step calls (`aura.agents.gmail_mailer.McpGmailMailer`, stdio).
+- Human approval, then a re-check: the worker runs the outbound step only for a job resumed after **its own** `draft_email` handoff was resolved with `approve` (a `do_not_revisit` directive from another email never counts). The MCP server checks again, independently, that the approval is resolved, decided `approve`, for exactly this recipient, and not used before; `send_gmail` also refuses unless the mode is `gmail_send`.
+- Pre-send checks (each failure is an `outbound_blocked` audit row with its reason, and the job completes noting it): mode not `off`; the approved recipient is still the party's **verified primary** email; not on the **suppression list** (address or domain; **Settings › Suppression**, dealmaker or compliance); the approver is still on the deal's wall; Gmail connected; the **daily cap**.
+- Idempotent: one `outbound_message` per handoff (unique key), written and committed as `queued` before Gmail is called, so a retried or resumed segment never sends twice.
+- Metrics: `success.outbound_executed` now counts **approved executions**; `outbound.outbound_without_approval` counts executions with no approved handoff behind them and must be **0** (structurally impossible).
+- Spans `outbound.check` and `outbound.gmail` carry only the recipient's domain, never the address.
+
+**Hygiene.** If `client_secret.json` was ever shared or pasted anywhere, reset the client secret in the Cloud console (*Credentials → your Desktop client → Reset secret*), download the new JSON, replace the file and reconnect.
+
 ### Retries, dead letters and recovery
 
 The worker claims a segment with one atomic `UPDATE ... WHERE status = 'queued'`, so two workers can never run the same segment. Each claim stamps `claimed_by`, `claimed_at` and counts an attempt.
@@ -341,6 +382,11 @@ Schema: migration `0012_harness_eval_obs` (tables `eval_run`, `eval_case_result`
 | `GET /api/prompts` | `[{template_id, version, ref, role, sha256, active, path}]` |
 | `GET /api/traces/{trace_id}` | `{trace_id, spans: [{trace_id, span_id, parent_span_id, name, start, end, duration_ms, attributes, status}]}`, wall-filtered, 404 when none is visible |
 | `GET /api/deals/{id}/notes` | `[{id, deal_id, body, author, source, job_id, created_at}]`, 404 off-wall |
+| `GET/POST /api/parties/{id}/contacts`, `DELETE /api/parties/{id}/contacts/{cid}`, `POST /api/parties/contacts/{cid}/verify` (0013) | Party email contacts `{id, party_id, name, email, is_primary, verified_at, verified_by, created_by, created_at}`. Read: dealmaker, analyst, compliance; add/remove: dealmaker or analyst; verify: dealmaker. 422 for a malformed address, 409 for a duplicate. Audited `contact_added`, `contact_removed`, `contact_verified` |
+| `GET/POST /api/suppression`, `DELETE /api/suppression/{id}` (0013) | Do-not-contact list `{id, kind: email\|domain, value, reason, created_by, created_at}`; dealmaker or compliance; audited `suppression_added`/`suppression_removed` |
+| `GET /api/outbound?handoff_id=` (0013) | Wall-filtered outbound log `{id, handoff_id, job_id, deal_id, party_id, to_email, subject, mode, status: queued\|drafted\|sent\|blocked\|failed, gmail_id, gmail_thread_id, error, created_at, completed_at, trace_id}` |
+| `GET /api/integrations/gmail` (0013) | Admin or dealmaker. `{mode, connected, account_email, scopes, expires_at, needs_reconnect, storage, daily_limit, sent_today, connect_command, detail}`; never a token. The mode is not settable through the API |
+| `GET /api/metrics` (0013) | Adds `outbound: {mode, drafted, sent, blocked, failed, blocked_by_reason, outbound_without_approval}`; `success.outbound_executed` counts approved executions |
 | `GET /api/metrics` (0012) | Adds `evaluation: {latest_runs: [{capability, eval_run_id, orchestrator, model_id, score, threshold, passed, completed_at}], override_rate: [...], autonomy: [{capability, level, reason, demoted_at}]}` and `security: {injection_suspected, untrusted_content_handoffs}` |
 
 | `GET/POST/DELETE /api/deals/{id}/members` | Wall membership. POST and DELETE are compliance only, take `{"username": ...}`, and are audited |
@@ -436,12 +482,12 @@ npm run build      # must pass with no type errors
 
 ## 8. Known limitations (read before trusting it)
 
-- **The model is small.** `qwen3.5:4b` will not produce a clean tool call every run. When it doesn't propose an action, the job simply completes without raising a gate. The deterministic protection lives in `gate_policy` — but in v1 agents only *propose* actions; nothing actually sends email or moves money yet.
+- **The model is small.** `qwen3.5:4b` will not produce a clean tool call every run. When it doesn't propose an action, the job simply completes without raising a gate. The deterministic protection lives in `gate_policy` — agents only *propose* actions. Email leaves only through the gated Gmail integration, after a person approves (off by default; see "Gmail (outbound email)"); nothing moves money.
 - **Not production-hardened.** The JWT secret in `.env` is a development default. Change it before anyone else uses this.
 - **Single machine, single user at a time.** SQLite plus a serialized worker. Concurrent agent runs need Postgres first.
 - **Walls are application-level.** Every deal read goes through the repositories, which filter by wall membership, but SQLite has no row-level security. The WebSocket feed is filtered too: an event naming a deal (`entity_changed {kind, deal_id}` and the handoff/job events) reaches only users on that deal's wall, and is dropped if the wall cannot be read. Real walls need Postgres (PRD D1).
 - **Compliance moves a deal only to override its own guards** (T9, T11), always with a written justification that is stored on the evaluation row and audited.
-- **Nothing leaves the machine** — that is deliberate: local model, local database, no telemetry (CrewAI and OpenTelemetry telemetry are switched off in `.env`).
+- **Nothing leaves the machine** unless you connect Gmail and set `AURA_OUTBOUND_MODE` — that is deliberate: local model, local database, no telemetry (CrewAI and OpenTelemetry telemetry are switched off in `.env`).
 
 ---
 

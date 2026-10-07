@@ -67,7 +67,7 @@ export function Sidebar({
   const sections: { label: string | null; items: NavItem[] }[] = [
     { label: null, items: items.filter((n) => n.group === "primary") },
     { label: "Automation", items: items.filter((n) => n.group === "automation") },
-    { label: "Admin", items: items.filter((n) => n.group === "admin") },
+    { label: "Settings", items: items.filter((n) => n.group === "admin") },
   ].filter((sec) => sec.items.length);
 
   return (

@@ -9,7 +9,8 @@ import { useApi } from "@/shared/lib/useApi";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Badge, Card, CardHeader, Tip } from "@/shared/ui/primitives";
 import { EmptyState, InlineError, Skel, Unavailable } from "@/shared/ui/States";
-import { getMetrics, type EvaluationMetrics, type Metrics, type ReliabilityMetrics, type SecurityMetrics, type StageDwell, type SuccessMetrics } from "../api";
+import { MODE_LABEL } from "@/features/integrations/api";
+import { getMetrics, type EvaluationMetrics, type Metrics, type OutboundMetrics, type ReliabilityMetrics, type SecurityMetrics, type StageDwell, type SuccessMetrics } from "../api";
 
 /* --------------------------------- helpers -------------------------------- */
 
@@ -21,7 +22,7 @@ export function formatHours(h: number | null | undefined): string {
   return `${d < 10 ? d.toFixed(1) : Math.round(d)} d`;
 }
 
-type Status = "pass" | "fail" | "none";
+type Status = "pass" | "fail" | "none" | "info";
 
 type MetricCard = {
   key: keyof SuccessMetrics;
@@ -79,11 +80,11 @@ function cards(s: SuccessMetrics): MetricCard[] {
     },
     {
       key: "outbound_executed",
-      label: "Outbound actions executed without approval",
+      label: "Approved outbound executions",
       value: s.outbound_executed == null ? "—" : String(s.outbound_executed),
-      target: "0",
-      status: zero(s.outbound_executed),
-      caption: "Emails or other outbound actions carried out without a human approval on record.",
+      target: "n/a",
+      status: s.outbound_executed == null ? "none" : "info",
+      caption: "Outbound actions (Gmail drafts or sends) carried out after a person approved them. Outbound without approval is tracked separately under Outbound email.",
       source: "task / handoff / audit",
     },
     {
@@ -102,6 +103,7 @@ const STATUS_UI: Record<Status, { tone: "success" | "danger" | "neutral"; label:
   pass: { tone: "success", label: "On target", icon: <CheckCircle2 className="h-3 w-3" /> },
   fail: { tone: "danger", label: "Below target", icon: <XCircle className="h-3 w-3" /> },
   none: { tone: "neutral", label: "No data", icon: <CircleDashed className="h-3 w-3" /> },
+  info: { tone: "neutral", label: "Informational", icon: <CircleDashed className="h-3 w-3" /> },
 };
 
 /* --------------------------------- pieces --------------------------------- */
@@ -314,6 +316,60 @@ function SecuritySection({ s }: { s: SecurityMetrics }) {
   );
 }
 
+function OutboundSection({ o }: { o: OutboundMetrics }) {
+  const reasons = Object.entries(o.blocked_by_reason ?? {}).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  const safe = o.outbound_without_approval === 0;
+  return (
+    <section aria-label="Outbound email">
+      <div className="mb-3 flex items-center gap-3">
+        <h2 className="text-[12px] font-medium text-fg-2">Outbound email</h2>
+        <Badge tone={o.mode === "off" ? "neutral" : o.mode === "gmail_send" ? "danger" : "accent"}>{MODE_LABEL[o.mode] ?? o.mode}</Badge>
+        <Link href="/settings/integrations" className={sectionLink}>Integrations</Link>
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <StatTile label="Gmail drafts created" value={o.drafted} caption="Approved drafts placed in Gmail for someone to review and send." />
+        <StatTile label="Sent via Gmail" value={o.sent} caption="Approved emails sent through Gmail." />
+        <StatTile label="Blocked" value={o.blocked} caption="Approved emails stopped by a safety check before anything left." />
+        <StatTile label="Failed" value={o.failed} danger={o.failed > 0} caption="Approved emails Gmail could not take." />
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className={cx("rounded-md border p-4 shadow-card", safe ? "border-success-border bg-success-soft" : "border-danger-border bg-danger-soft")}>
+          <div className="flex items-start gap-2">
+            <span className={cx("text-[12px] leading-snug", safe ? "text-success" : "text-danger")}>Outbound without approval</span>
+            <Badge tone={safe ? "success" : "danger"} className="ml-auto">
+              {safe ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />} {safe ? "Safe" : "Alarm"}
+            </Badge>
+          </div>
+          <div className={cx("num mt-2 font-serif text-[32px] leading-none", safe ? "text-success" : "text-danger")}>
+            {o.outbound_without_approval}
+            {safe ? <span className="ml-2 font-sans text-[14px]">— structurally impossible</span> : null}
+          </div>
+          <p className="mt-3 text-[12px] leading-relaxed text-fg-2">
+            {safe
+              ? "Nothing leaves without a recorded human approval. This must always read 0."
+              : "An email went out with no approval on record. This should be impossible: treat it as an incident and check the audit chain."}
+          </p>
+        </div>
+        <Card>
+          <CardHeader title="Why emails were blocked" />
+          {reasons.length === 0 ? (
+            <p className="px-4 py-3 text-[12px] text-muted">No approved email has been blocked.</p>
+          ) : (
+            <ul className="divide-y divide-line-subtle">
+              {reasons.map(([r, n]) => (
+                <li key={r} className="flex h-9 items-center px-4 text-[13px]">
+                  <span className="text-fg-2">{humanize(r)}</span>
+                  <span className="num ml-auto font-mono text-[12px] text-fg">{n}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
+    </section>
+  );
+}
+
 function MetricsSkeleton() {
   return (
     <div className="space-y-6 px-8" aria-busy="true" aria-label="Loading metrics">
@@ -374,6 +430,7 @@ export function MetricsView() {
           {m.data.reliability ? <ReliabilitySection r={m.data.reliability} /> : null}
           {m.data.evaluation ? <EvaluationSection e={m.data.evaluation} /> : null}
           {m.data.security ? <SecuritySection s={m.data.security} /> : null}
+          {m.data.outbound ? <OutboundSection o={m.data.outbound} /> : null}
         </div>
       )}
     </div>

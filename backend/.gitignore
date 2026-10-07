@@ -1,2 +1,6 @@
 # Uploaded deal documents (content-addressed files).
 /data/
+
+# Google OAuth client and tokens (never commit)
+client_secret*.json
+*gmail_token*

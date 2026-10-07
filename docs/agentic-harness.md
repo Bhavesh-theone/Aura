@@ -89,6 +89,7 @@ Legend: **[LLM]** = the model decides · **[Code]** = deterministic code decides
 35. **[Code]** Ungated tools (internal read/write) run as the acting user inside a `tool.call` span (`tools.py:74-87`).
 36. **[Code]** Tool output screening: what an ungated tool returns is stripped of hidden characters and screened; output that looks like an injection is wrapped as untrusted data and recorded on the gate (`tools.py:50-55`, `orchestrator.py:125-129`).
 37. **[Code]** The standalone stdio MCP server enforces `gate_policy` itself: a gated call answers `requires_human_approval` and never reaches the tool body (`mcp/servers/deals_server.py:40-63`).
+38a. **[Code]** A second, separate MCP server (`mcp/servers/gmail_server.py`) has exactly two tools, `create_gmail_draft` and `send_gmail` (no inbox reading). The crew is never given them; both map to OUTBOUND in `gate_policy`. Each re-verifies as SYSTEM that its `approval_id` is a resolved `draft_email` handoff decided `approve` for exactly that recipient and not yet used, else answers `refused` without calling Gmail; `send_gmail` also needs `AURA_OUTBOUND_MODE=gmail_send`. Gmail goes through a `GmailClient` port (real google-api-python-client adapter, fake for tests).
 38. `add_internal_note` now stores the note (`deal_note`), as the acting user, behind their walls, audited `note_added` (`deals_server.py:85-102`, `core/services/notes.py:12-30`); `GET /api/deals/{id}/notes` lists them.
 
 ### 6. Policy & guardrails
@@ -164,7 +165,8 @@ Legend: **[LLM]** = the model decides · **[Code]** = deterministic code decides
 86. Every audited mutation emits `entity_changed {kind, deal_id}` after commit (`core/services/notifying_audit.py:13-18`).
 87. The WebSocket at `/ws/events` (JWT) delivers deal events **only to members of that deal's wall** and drops them if the wall can't be read (`api/main.py:79-90`, `api/ws/hub.py:47-65`). Reliability events (`job_retrying`, `job_deferred`, `segment_dead_lettered`, `job_failed`) use the same path.
 88. The frontend keeps one socket with backoff, refetches on matching events, and polls every 20 seconds when the socket is down (`frontend/shared/api/ws.ts`, `events.tsx`); the Activity feed has verbs for the new audit actions.
-89. Nothing is ever sent outbound: `outbound_executed` is never written (`core/services/outbound.py`).
+89. Outbound email is off by default (`AURA_OUTBOUND_MODE=off`). When on, it leaves only after a person approves a `draft_email` handoff: the worker, resuming that job, runs `OutboundService.execute_after_approval` (`core/services/outbound.py`, called from `run_segment`): deterministic pre-send checks (mode, verified primary recipient unchanged, suppression list, approver still on the wall, Gmail connected, daily cap), each failure audited `outbound_blocked`; then an `outbound_message` row is committed as `queued` (unique per handoff, so retries never resend) and `McpGmailMailer` calls the Gmail MCP server over stdio. Success is audited `outbound_executed` (draft or send, gmail id, recipient, handoff). Spans `outbound.check` and `outbound.gmail` carry only the recipient domain.
+90. Metrics: `outbound_executed` counts approved executions; `outbound.outbound_without_approval` must be 0 (`core/services/outbound.py`, `outbound_metrics`). OAuth: `python -m aura.mcp.gmail_auth` (token in the OS keyring).
 
 ---
 
@@ -194,7 +196,7 @@ This follows the 12-factor principle: the model proposes, and deterministic code
 | 2 | Context assembly | ✅ Strong | Versioned prompts, context re-assembled as the job's user at submit and at run time, BM25 retrieval with citations, character budget with recorded drops. **Gap:** keyword retrieval only (no embeddings); compaction drops or truncates, it does not summarise |
 | 3 | Orchestration | ✅ Strong | Capability dispatch, sequential crew, resume short-circuit, per-segment orchestrator health check with stub fallback, per-segment call and time budgets, daily budget. **Gap:** fixed crews, no planning loop (by design) |
 | 4 | Model access | 🟡 Partial | Recording wrapper, JSON repair, safe fallbacks, retries with backoff, concurrency limit. **Gaps:** one model only; `pinned_model` is stored but never used to choose a model; the concurrency semaphore is per process; `cost_inr` is always 0; the fallback is a keyword stub, not a second model |
-| 5 | Tools & actions | ✅ Strong | Gated MCP wrappers; the standalone MCP server gates itself; `add_internal_note` persists; tool output screened. **Gap:** only four tools, and `send_email` is deliberately never executable |
+| 5 | Tools & actions | ✅ Strong | Gated MCP wrappers; the standalone MCP server gates itself; `add_internal_note` persists; tool output screened. Gmail draft/send tools exist on a separate approval-checking MCP server the crew never sees. **Gap:** only four crew tools, and `send_email` is deliberately never executable |
 | 6 | Policy & guardrails | ✅ Strong | Deterministic gate, materiality, confidence, autonomy level, policy-chosen recommendation, schema validation |
 | 7 | Human-in-the-loop | ✅ Strong | Structured handoffs, directives, `do_not_revisit`, escalation, atomic resolve (409 for the loser) |
 | 8 | State & memory | 🟡 Partial | Atomic claim, lease recovery, stale-result discard, durable job, segment, task and handoff records. **Gaps:** single-machine SQLite, so no multi-host workers and the audit write lock is per process; no long-term agent memory (by design) |
@@ -202,7 +204,7 @@ This follows the 12-factor principle: the model proposes, and deterministic code
 | 10 | Evaluation & feedback | 🟡 Partial | Golden sets, scoring, override rate, automatic demotion, admin promotion, partial runs excluded. **Gaps:** golden sets are small (24/12/6) and fictional; the stub scores are a keyword baseline, not model quality; evals run without retrieval, and no golden case drives the injection path end to end; real-model runs are manual |
 | 11 | Security & isolation | ✅ Strong | Walls bind agent tools and run-time context; local-only; injection screening of documents, retrieved chunks and tool output with a forced human decision. **Gaps:** screening is rule-based (a paraphrased attack can pass); the worker still holds SYSTEM-scoped repositories |
 | 12 | Error handling & recovery | ✅ Strong | Transient/permanent split, backoff, dead letters, manual retry, crash recovery, stale-result discard, idempotent submit, LLM call retries |
-| 13 | Delivery / Egress | ✅ Strong | Wall-filtered WebSocket, audited events, nothing sent outbound. **Gap:** events with no `deal_id` go to every connected socket (`api/ws/hub.py:49-50`) |
+| 13 | Delivery / Egress | ✅ Strong | Wall-filtered WebSocket, audited events, outbound email only after human approval plus pre-send checks (off by default). **Gap:** events with no `deal_id` go to every connected socket (`api/ws/hub.py:49-50`) |
 
 **Totals:** 10 strong · 3 partial · 0 missing. (First trace: 7 strong · 5 partial · 1 missing.)
 
