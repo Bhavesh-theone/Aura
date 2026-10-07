@@ -3,8 +3,11 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from aura.api.deps import (current_user, get_agent_runs, get_anchor_path, get_deals,
-                           get_guards, get_history, get_plain_audit, get_session)
+from aura.api.deps import (current_user, get_agent_runs, get_anchor_path, get_autonomy,
+                           get_deals, get_evals, get_guards, get_handoffs, get_history,
+                           get_plain_audit, get_session)
+from aura.api.schemas.harness import EvaluationMetricsOut, SecurityMetricsOut
+from aura.core.services.harness_metrics import evaluation_metrics, security_metrics
 from aura.api.schemas.deals import (MetricsOut, ReliabilityMetricsOut, StageDwellOut,
                                     SuccessMetricsOut)
 from aura.core.domain.user import User
@@ -18,7 +21,8 @@ router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 def metrics(user: User = Depends(current_user), s: Session = Depends(get_session),
             deals=Depends(get_deals), history=Depends(get_history),
             guards=Depends(get_guards), runs=Depends(get_agent_runs),
-            audit=Depends(get_plain_audit),
+            audit=Depends(get_plain_audit), handoffs=Depends(get_handoffs),
+            evals=Depends(get_evals), autonomy=Depends(get_autonomy),
             anchor_path: Path | None = Depends(get_anchor_path)):
     """Wall-filtered. Stage dwell comes only from deal_stage_history (completed stays).
     guarded_forward_transitions_pct (SM1) is defined over forward moves: regressions and
@@ -34,5 +38,7 @@ def metrics(user: User = Depends(current_user), s: Session = Depends(get_session
             handoff_rejections_422=m.handoff_rejections_422,
             outbound_executed=m.outbound_executed,
             deals_closed_end_to_end=m.deals_closed_end_to_end),
-        reliability=ReliabilityMetricsOut(**vars(m.reliability)) if m.reliability else None)
+        reliability=ReliabilityMetricsOut(**vars(m.reliability)) if m.reliability else None,
+        evaluation=EvaluationMetricsOut(**vars(evaluation_metrics(evals, autonomy, handoffs))),
+        security=SecurityMetricsOut(**vars(security_metrics(audit, handoffs))))
 

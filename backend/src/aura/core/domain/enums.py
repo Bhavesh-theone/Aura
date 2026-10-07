@@ -231,6 +231,8 @@ class HandoffTrigger(str, Enum):
     POLICY_REQUIRED = "policy_required"
     EXPLICIT_REQUEST = "explicit_request"
     HUMAN_CORRECTION = "human_correction"
+    # The context held text that looks like a prompt injection (injection_policy).
+    UNTRUSTED_CONTENT = "untrusted_content"
 
 
 class HandoffStatus(str, Enum):

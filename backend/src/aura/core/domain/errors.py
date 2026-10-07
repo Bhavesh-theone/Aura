@@ -35,3 +35,15 @@ class GuardBlocked(DomainError):
     def __init__(self, message: str, evaluations: list):
         super().__init__(message)
         self.evaluations = evaluations
+
+
+class RateLimited(DomainError):
+    """Too many requests (maps to 429 with Retry-After)."""
+
+    def __init__(self, message: str, retry_after_seconds: float):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
+class CapabilityDisabled(Conflict):
+    """The capability's autonomy level is 0 (maps to 409). Permanent for a segment."""

@@ -36,6 +36,10 @@ class RunContext:
     runs: AgentRunSink
     username: str | None = None
     segment_id: int | None = None
+    # Prepended to every run's archetype ('eval:' for golden-set runs).
+    archetype_prefix: str = ""
+    # Recorded in each run's input_digest (the context's prompt-injection screening).
+    notes: dict | None = None
 
 
 @dataclass

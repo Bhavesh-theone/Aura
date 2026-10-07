@@ -12,6 +12,8 @@ from aura.core.domain.enums import (DealStage, DocClass, Role, SegmentStatus,
                                     TransactionClass)
 from aura.core.domain.guard import GuardEvaluation, StageGuard
 from aura.core.domain.handoff import Handoff, Task
+from aura.core.domain.harness import (CapabilityAutonomy, DealNote, EvalRun,
+                                     TraceSpanRecord)
 from aura.core.domain.job import IdempotencyRecord, Job
 from aura.core.domain.mandate import Mandate
 from aura.core.domain.party import DealParty, Party
@@ -43,6 +45,11 @@ class SegmentRepository(Protocol):
         """RUNNING segments whose claim is older than the cutoff (or was never stamped)."""
         ...
     def list_by_status(self, status: SegmentStatus) -> list[Segment]: ...
+    def hold_claim(self, segment_id: int, claimed_by: str | None, attempts: int) -> bool:
+        """True while the segment is still RUNNING under this claim (same claimer, same
+        attempt count). Takes the write lock, so the claim cannot change until commit. False
+        when it was recovered or re-claimed meanwhile: the caller's result is stale."""
+        ...
 
 
 @runtime_checkable
@@ -239,3 +246,39 @@ class ConditionRepository(Protocol):
     def get(self, cp_id: int) -> ConditionPrecedent | None: ...
     def update(self, cp: ConditionPrecedent) -> ConditionPrecedent: ...
     def list_for_deal(self, deal_id: int) -> list[ConditionPrecedent]: ...
+
+
+@runtime_checkable
+class EvalRepository(Protocol):
+    def add_run(self, run: EvalRun) -> EvalRun:
+        """Store the run and its case results."""
+        ...
+    def get_run(self, run_id: int) -> EvalRun | None:
+        """With its case results."""
+        ...
+    def list_runs(self, capability: str | None = None, limit: int = 50) -> list[EvalRun]:
+        """Newest first, without case results."""
+        ...
+    def latest(self, capability: str, include_stub: bool = False) -> EvalRun | None: ...
+
+
+@runtime_checkable
+class AutonomyRepository(Protocol):
+    def get(self, capability: str) -> CapabilityAutonomy:
+        """A capability with no row is at the default level (2)."""
+        ...
+    def save(self, state: CapabilityAutonomy) -> CapabilityAutonomy: ...
+    def list_all(self) -> list[CapabilityAutonomy]: ...
+
+
+@runtime_checkable
+class NoteRepository(Protocol):
+    def add(self, note: DealNote) -> DealNote: ...
+    def list_for_deal(self, deal_id: int) -> list[DealNote]: ...
+
+
+@runtime_checkable
+class TraceRepository(Protocol):
+    def list_trace(self, trace_id: str) -> list[TraceSpanRecord]:
+        """The trace's spans the viewer may see, oldest first."""
+        ...

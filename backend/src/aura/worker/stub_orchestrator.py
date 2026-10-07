@@ -42,25 +42,81 @@ _KEYWORDS: list[tuple[tuple[str, ...], DocClass]] = [
 ]
 
 
-def guess_class(filename: str, current: str) -> tuple[str, float]:
+# Phrases in the document text that point at a class (whole words, case-insensitive).
+_CONTENT: list[tuple[tuple[str, ...], DocClass]] = [
+    (("term sheet", "non-binding", "indicative terms"), DocClass.TERM_SHEET),
+    (("engagement letter", "scope of services", "success fee", "retainer"),
+     DocClass.ENGAGEMENT_LETTER),
+    (("shareholders' agreement", "shareholders agreement", "tag-along", "drag-along"),
+     DocClass.SHPA),
+    (("share purchase agreement", "sale shares", "the purchaser"), DocClass.SPA),
+    (("non-disclosure", "confidential information", "confidentiality agreement"),
+     DocClass.NDA),
+    (("valuation", "discounted cash flow", "fair value", "registered valuer"),
+     DocClass.VALUATION_REPORT),
+    (("shareholding pattern", "cap table", "fully diluted", "esop pool"), DocClass.CAP_TABLE),
+    (("memorandum of association", "articles of association", "objects of the company"),
+     DocClass.MOA_AOA),
+    (("resolved that", "board of directors", "board resolution"), DocClass.BOARD_RESOLUTION),
+    (("gstr-3b", "gstr-1", "input tax credit", "gst return"), DocClass.GST_RETURN),
+    (("itr-6", "income tax return", "assessment year"), DocClass.TAX_RETURN),
+    (("statement of account", "opening balance", "closing balance", "ifsc"),
+     DocClass.BANK_STATEMENT),
+    (("chg-1", "hypothecation", "mortgage", "creation of charge"), DocClass.CHARGE_DOCUMENT),
+    (("sale deed", "7/12", "survey no", "khasra", "title deed", "mutation entry"),
+     DocClass.LAND_TITLE),
+    (("nclt", "petition", "high court", "litigation", "suit no"), DocClass.LITIGATION_SUMMARY),
+    (("consent to operate", "pollution control board", "environmental clearance"),
+     DocClass.ENV_CLEARANCE),
+    (("balance sheet", "profit and loss", "statement of profit", "audited financial"),
+     DocClass.FINANCIAL_STATEMENT),
+]
+
+
+def _content_votes(text: str) -> list[tuple[int, DocClass]]:
+    lowered = text.lower()
+    votes = []
+    for phrases, doc_class in _CONTENT:
+        hits = sum(1 for p in phrases
+                   if re.search(r"(?<![a-z0-9])" + re.escape(p) + r"(?![a-z0-9])", lowered))
+        if hits:
+            votes.append((hits, doc_class))
+    return sorted(votes, key=lambda v: -v[0])  # stable: list order breaks ties
+
+
+def guess_class(filename: str, current: str, text: str = "") -> tuple[str, float]:
+    """A keyword baseline, never a model: strong evidence in the text (two or more phrases
+    for one class) wins, then a filename keyword, then a single phrase in the text."""
+    votes = _content_votes(text) if text else []
+    if votes and votes[0][0] >= 2:
+        return votes[0][1].value, 0.8
     name = filename.lower()
     for words, doc_class in _KEYWORDS:
         if any(w in name for w in words):
             return doc_class.value, 0.9
+    if votes:
+        return votes[0][1].value, 0.6
     return current, 0.3
 
 
 _FIGURES = {"revenue_inr": r"revenue", "ebitda_inr": r"ebitda", "net_debt_inr": r"net[ _]debt"}
+_UNITS = {"crore": 1e7, "cr": 1e7, "lakh": 1e5, "lakhs": 1e5, "lac": 1e5, "lacs": 1e5}
 
 
 def read_figures(text: str) -> tuple[dict, float]:
-    """Headline figures found as 'label: number' in the text. All three found is a
-    confident read; each one missing lowers the confidence, so a thin document is sent to
-    a person."""
+    """Headline figures found as 'label: number' in the text, in rupees ('12.5 crore' and
+    '450 lakh' are converted). All three found is a confident read; each one missing lowers
+    the confidence, so a thin document is sent to a person."""
     figures: dict = {}
     for key, label in _FIGURES.items():
-        match = re.search(label + r"[^0-9\n]{0,20}([0-9][0-9,]*(?:\.[0-9]+)?)", text, re.I)
-        figures[key] = float(match.group(1).replace(",", "")) if match else None
+        match = re.search(label + r"[^0-9\n]{0,20}([0-9][0-9,]*(?:\.[0-9]+)?)"
+                          r"(?:\s*(crore|cr|lakhs?|lacs?)\b)?", text, re.I)
+        if match:
+            value = float(match.group(1).replace(",", ""))
+            unit = (match.group(2) or "").lower()
+            figures[key] = round(value * _UNITS.get(unit, 1), 2)
+        else:
+            figures[key] = None
     found = sum(1 for v in figures.values() if v is not None)
     return figures, 0.98 if found == len(_FIGURES) else round(0.3 + 0.2 * found, 2)
 
@@ -125,13 +181,14 @@ class StubOrchestrator:
 
     def _classify(self, context_in: dict) -> OrchestratorResult:
         doc = context_in["document"]
-        proposed, confidence = guess_class(doc["filename"], doc["current_class"])
+        proposed, confidence = guess_class(doc["filename"], doc["current_class"],
+                                           doc.get("excerpt") or "")
         action = ProposedAction(
             tool="classify_document", category=classify("classify_document"),
             arguments={"document_id": doc["id"], "filename": doc["filename"],
                        "current_class": doc["current_class"], "proposed_class": proposed,
                        "confidence": confidence,
-                       "rationale": "Chosen from keywords in the filename (stub)."},
+                       "rationale": "Chosen from keywords in the filename and text (stub)."},
             summary=f"Classify {doc['filename']} as {proposed}")
         return OrchestratorResult(completed=False,
                                   context_out={**context_in, "proposal_made": True},

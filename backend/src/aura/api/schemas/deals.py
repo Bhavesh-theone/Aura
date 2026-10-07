@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any
 
+from aura.api.schemas.harness import EvaluationMetricsOut, SecurityMetricsOut
 from pydantic import BaseModel, Field
 
 from aura.core.domain.enums import (CPStatus, CriterionHardness, CriterionOperator, DealStage,
@@ -303,4 +304,7 @@ class MetricsOut(BaseModel):
     stage_dwell: list[StageDwellOut]
     success: SuccessMetricsOut
     reliability: ReliabilityMetricsOut | None = None
+    # Harness evaluation and security (migration 0012).
+    evaluation: EvaluationMetricsOut | None = None
+    security: SecurityMetricsOut | None = None
 

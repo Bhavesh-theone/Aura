@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 
-from aura.api.deps import (current_user, get_audit, get_deals, get_documents, get_events,
-                           get_idempotency, get_jobs, get_parties, get_segments, get_store)
+from aura.api.deps import (current_user, get_audit, get_autonomy, get_deals, get_documents,
+                           get_events, get_idempotency, get_jobs, get_parties, get_segments,
+                           get_store)
+from aura.api.rate_limit import check_job_submit
+from aura.worker.runner import context_limits
 from aura.api.schemas.dto import DeadLetterResponse, JobResponse, SubmitJobRequest
 from aura.core.domain.user import User
 from aura.core.services.segment_reliability import list_dead_letter, retry_job
@@ -13,7 +16,7 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 def _to_response(job) -> JobResponse:
     return JobResponse(id=job.id, status=job.status.value, inputs=job.inputs,
                        result=job.result, deal_id=job.deal_id, created_at=job.created_at,
-                       created_by=job.created_by)
+                       created_by=job.created_by, trace_id=job.trace_id)
 
 
 @router.post("", response_model=JobResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -24,15 +27,19 @@ def create_job(body: SubmitJobRequest, response: Response,
                audit=Depends(get_audit), events=Depends(get_events),
                deals=Depends(get_deals), documents=Depends(get_documents),
                parties=Depends(get_parties), store=Depends(get_store),
-               idempotency=Depends(get_idempotency)):
+               idempotency=Depends(get_idempotency), autonomy=Depends(get_autonomy)):
     """An optional Idempotency-Key header makes the call safe to repeat: the same key and
     body within 24 hours return the original job (200, header Idempotent-Replayed: true)
-    instead of a new one; the same key with a different body is a 409."""
+    instead of a new one; the same key with a different body is a 409.
+
+    Each user may submit job_submits_per_minute jobs a minute (429 with Retry-After over
+    it). A capability whose autonomy level is 0 is refused with a 409 naming the reason."""
+    check_job_submit(user.username)
     job, replayed = submit_job_idempotent(
         idempotency_key, idempotency, inputs=body.inputs, deal_id=body.deal_id,
         actor=user.username, jobs=jobs, actor_role=user.role, segments=segments,
         audit=audit, events=events, deals=deals, documents=documents, parties=parties,
-        store=store)
+        store=store, autonomy=autonomy, limits=context_limits())
     if replayed:
         response.status_code = status.HTTP_200_OK
         response.headers["Idempotent-Replayed"] = "true"

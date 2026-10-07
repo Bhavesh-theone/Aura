@@ -26,7 +26,7 @@ def test_instrumented_llm_records_every_call(monkeypatch):
     assert llm.call("plain string prompt") == "a draft"
     assert len(sink.runs) == 2
     first, second = sink.runs
-    assert first.archetype == "Drafter" and first.prompt_template_id == "crew.drafter.v1"
+    assert first.archetype == "Drafter" and first.prompt_template_id == "crew.drafter@v1"
     assert second.input_digest["messages"] == [{"role": "user", "content": "plain string prompt"}]
     assert second.prompt_template_id == "crew.unregistered"
 

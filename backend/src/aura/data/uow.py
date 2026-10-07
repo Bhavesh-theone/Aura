@@ -41,6 +41,8 @@ class SqlUnitOfWork:
         self.session.commit()
         for deferred in self._deferred:
             deferred.flush()
+        from aura.data.spans import flush_spans
+        flush_spans(self.session)  # finished spans, in their own small transaction
 
     def rollback(self) -> None:
         self.session.rollback()

@@ -44,7 +44,7 @@ That creates `.venv/` and installs everything from `uv.lock`. The `.env` file is
 
 ### Database migrations (Alembic)
 
-The schema is versioned in `backend/migrations/versions/` (`0001` baseline through `0010`). **You normally do nothing:** the API runs `alembic upgrade head` on every start, so an existing `backend/aura.db` is upgraded in place (its approvals become handoffs, existing deals get a wall with their owner on it, `member` users become analysts, the admin user `bhavesh` becomes a dealmaker, documents get version rows, checklist items are grouped under templates). `0009` refuses to run, changing nothing, if a stored identifier is malformed: fix the named rows first. To drive it by hand:
+The schema is versioned in `backend/migrations/versions/` (`0001` baseline through `0012_harness_eval_obs`). **You normally do nothing:** the API runs `alembic upgrade head` on every start, so an existing `backend/aura.db` is upgraded in place (its approvals become handoffs, existing deals get a wall with their owner on it, `member` users become analysts, the admin user `bhavesh` becomes a dealmaker, documents get version rows, checklist items are grouped under templates). `0009` refuses to run, changing nothing, if a stored identifier is malformed: fix the named rows first. To drive it by hand:
 
 ```bash
 cd backend
@@ -241,6 +241,74 @@ curl -s -X POST localhost:8000/api/jobs/42/retry -H "Authorization: Bearer $TOKE
 
 Schema for all of this is migration `0011_harness_reliability` (applied by `alembic upgrade head` on the next backend start; its downgrade turns `dead_letter` segments into `failed`).
 
+### Evaluation, autonomy and safety
+
+**Golden sets** are versioned files in `backend/evals/golden/`: `classify_document.jsonl` (24 fictional Indian deal documents, several with uninformative or misleading filenames), `extract_financials.jsonl` (12 snippets; figures in rupees, crore and lakh, two with a figure genuinely absent) and `draft_email.jsonl` (6 briefs scored by rules). Each eval run stores the sha256 of the file it scored, so a changed golden set shows up as a new version.
+
+```bash
+cd backend
+uv run python -m aura.evals.run --capability all --orchestrator stub        # deterministic, < 2 s
+uv run python -m aura.evals.run --capability classify_document --orchestrator crew --limit 5   # the real model (slow)
+uv run python -m aura.evals.autonomy             # what the demotion rules would do now
+uv run python -m aura.evals.autonomy --apply     # do it (the worker also does this every hour)
+```
+
+The runner sends every case through the **real orchestrator path**: the same context assembly (screening, wrapping) a job gets, then `Orchestrator.run`. Every model call is an `agent_run` row with archetype `eval:<role>` and no job or deal. It writes an `eval_run` row plus one `eval_case_result` per case, prints a table, and exits **1** when a capability scores below its threshold (**2** if the database has no eval tables yet: run `alembic upgrade head`). `--orchestrator crew` needs Ollama and never falls back to the stub.
+
+| Capability | Score (pass mark) | Also reported |
+| --- | --- | --- |
+| `classify_document` | accuracy (`AURA_EVAL_THRESHOLD_CLASSIFY_DOCUMENT`, 0.7) | macro-F1, mean confidence, calibration (accuracy where confidence >= 0.95) |
+| `extract_financials` | share of cases with all three figures within tolerance (`..._EXTRACT_FINANCIALS`, 0.7); tolerance per case, the wider of `abs` and `rel` x expected | per-field accuracy, mean confidence, calibration |
+| `draft_email` | rubric pass rate (`..._DRAFT_EMAIL`, 0.8). A draft passes when it has a subject, names the party, stays under `max_words`, invents no amount or percentage that is not in the brief, and makes no commitment ("we guarantee", "assured returns", "risk-free" ...) | pass rate per rule |
+
+The stub is a keyword baseline (filename and text phrases, `label: number` with crore/lakh conversion), not a model: its scores say the harness works, not that the model does.
+
+**Override rate** (online feedback): over resolved handoffs in the last 30 days, per capability. A person overrode the agent when they chose `keep` on a class change it proposed, `discard` on an extraction, or `reject` on a draft. `GET /api/evals/override-rates` (wall-filtered) and `GET /api/metrics` → `evaluation.override_rate`.
+
+**Autonomy levels** (`capability_autonomy`, SOSPE 9.6 adapted), one per capability:
+
+| Level | Meaning |
+| --- | --- |
+| 2 | A confident result may complete without a person (today: an extraction at >= 0.95). Classifications and drafts always go to a person anyway |
+| 1 | Every result goes to a person (a confident extraction raises a `policy_required` handoff that says the capability is at level 1) |
+| 0 | Switched off. `POST /api/jobs` for it is **409** naming the reason; a queued first segment fails with the same reason. Segments resuming a job a person already approved still finish |
+
+- **Demotion is automatic**, one level at a time, by the worker every `AURA_AUTONOMY_CHECK_INTERVAL_SECONDS` (3600; 0 = off) and by `python -m aura.evals.autonomy --apply`: when the capability's latest eval run on the real model failed its threshold, or when people overrode it more than `AURA_AUTONOMY_MAX_OVERRIDE_RATE` (20%) of at least `AURA_AUTONOMY_MIN_DECISIONS` (20) decisions in `AURA_AUTONOMY_WINDOW_DAYS` (30). Only evidence newer than the last demotion counts, so one bad week drops a level, not to zero. Audited `autonomy_demoted`.
+- **Promotion is never automatic**: `POST /api/autonomy/{capability}/promote`, **admin only** (403 otherwise), one level, and only with a passing eval run on the real model from the last 7 days (409 otherwise). Audited `autonomy_promoted`. Stub eval runs count for neither unless `AURA_AUTONOMY_COUNTS_STUB_EVALS=true`.
+- `pinned_model` is stored and shown but not yet used to pick the model.
+
+**Prompt-injection screening.** Every piece of document text (the subject document's excerpt, each retrieved chunk) and any tool output the crew reads goes through `core/policy/injection_policy.py` before it reaches a model: zero-width, bidi and control characters are stripped; named rules score the text (`ignore_instructions`, `role_reassignment`, `system_prompt`, `tool_call_json`, `role_tags`, `approval_manipulation`, `base64_blob`, `hidden_unicode`, `excessive_repetition`); the text is wrapped between `<<<UNTRUSTED_DATA>>>` markers with a standing instruction to treat it as data. The score and rules are kept in the segment context (`screening`) and in each run's `input_digest.notes`. At or above `AURA_INJECTION_RISK_THRESHOLD` (0.5) the result **always goes to a person**: a handoff with trigger **`untrusted_content`** whose evidence lists the matched rules and sources, recommending the option that changes nothing (`keep`, `discard`, `reject`), and an `injection_suspected` audit row. The `do_not_revisit` shortcut never applies to it. Once a person approves, the job finishes instead of asking again.
+
+**Context.** A job's context is assembled from the deal's own documents, **as the job's user**, both at submit and again when each segment runs (so a new document version, or a wall change, applies; a document the user can no longer see fails the segment with "no longer visible"). For `classify_document` and `draft_email` the deal's other documents are chunked and ranked with BM25 (standard library, local); the top `AURA_RETRIEVAL_TOP_K` (4) chunks ride along, screened and wrapped, with `citations` (document ids) that also appear on the proposed action. Everything is capped at `AURA_MAX_CONTEXT_CHARS` (6000): the least relevant chunks are dropped first, then the excerpt (`AURA_CONTEXT_EXCERPT_CHARS`, 2000) is truncated; `context_budget` records what was dropped.
+
+**Prompt registry.** Every role prompt is a file `backend/src/aura/agents/prompts/<id>@v<N>.md`, pinned by sha256 in `prompts/manifest.json`. A test fails when a file changes without a version bump: to change a prompt, add `<id>@v<N+1>.md`, pin it, and point `ACTIVE` at it. `agent_run.prompt_template_id` records `<id>@v<N>` (`classify_document@v2` is active; v2 adds the retrieved documents). `GET /api/prompts` lists them.
+
+**Tracing.** A local, OpenTelemetry-shaped tracer (`core/tracing.py`) records spans `job.submit`, `segment.run`, `llm.call` (GenAI attributes `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.usage.input_tokens/output_tokens`), `tool.call`, `handoff.create`, `handoff.resolve` (and `eval.run`/`eval.case`) into the `trace_span` table. Nothing is exported anywhere. The OpenTelemetry SDK is not used because `OTEL_SDK_DISABLED=true` (needed to keep CrewAI's telemetry off) would turn it into a no-op. One job is one trace: `POST /api/jobs` returns `trace_id`, segments continue it, each `agent_run` row carries its `trace_id` and `span_id`, and audit rows written inside a span carry `trace_id`/`span_id` in their payload. `GET /api/traces/{trace_id}` (wall-filtered, 404 when nothing is visible). `AURA_TRACING_ENABLED=false` turns it off.
+
+**Rate limits.** `POST /api/jobs`: `AURA_JOB_SUBMITS_PER_MINUTE` (20) per user, a token bucket; over it the answer is **429** with `Retry-After`. Model calls: at most `AURA_MAX_CONCURRENT_LLM_CALLS` (1) at once per process (a local CPU model cannot serve two usefully); a call that waits longer than the segment budget for a slot is a transient error and is retried like any other.
+
+**MCP server.** The standalone stdio deals server (`python -m aura.mcp.servers.deals_server`, acting as `AURA_MCP_USER`) enforces `gate_policy` itself: a gated tool (`send_email`, anything unmapped or over the materiality cap) never runs and answers `{"status": "requires_human_approval", "executed": false, "tool", "category", "message"}`. `add_internal_note` now stores the note (table `deal_note`, as the acting user, behind their walls, audited `note_added`); read them with `GET /api/deals/{id}/notes`.
+
+**A late result is thrown away.** When a worker finishes a segment it first confirms the segment is still claimed by it (same `claimed_by` and attempt count, still running) and holds that row until it commits. If the segment was recovered or re-claimed in the meantime, the late result is discarded and `stale_result_discarded` is audited; its model runs stay on record.
+
+| Setting (env) | Default | Meaning |
+| --- | --- | --- |
+| `AURA_EVAL_THRESHOLD_CLASSIFY_DOCUMENT` / `_EXTRACT_FINANCIALS` / `_DRAFT_EMAIL` | 0.7 / 0.7 / 0.8 | Pass mark of an eval run |
+| `AURA_AUTONOMY_MAX_OVERRIDE_RATE` | 0.20 | Override share above which a capability is demoted |
+| `AURA_AUTONOMY_MIN_DECISIONS` | 20 | Decisions needed before the override rate counts |
+| `AURA_AUTONOMY_WINDOW_DAYS` | 30 | Window of the override rate |
+| `AURA_AUTONOMY_COUNTS_STUB_EVALS` | false | Whether stub eval runs count for demotion and promotion |
+| `AURA_AUTONOMY_CHECK_INTERVAL_SECONDS` | 3600 | How often the worker applies the demotion rules (0 = never) |
+| `AURA_INJECTION_RISK_THRESHOLD` | 0.5 | Screening score at which a result goes to a person |
+| `AURA_MAX_CONTEXT_CHARS` | 6000 | Cap on document text in one model context |
+| `AURA_CONTEXT_EXCERPT_CHARS` | 2000 | Characters of the subject document read |
+| `AURA_RETRIEVAL_TOP_K` | 4 | Retrieved chunks of the deal's other documents |
+| `AURA_JOB_SUBMITS_PER_MINUTE` | 20 | Job submissions per user per minute (0 = off) |
+| `AURA_MAX_CONCURRENT_LLM_CALLS` | 1 | Model calls running at once |
+| `AURA_TRACING_ENABLED` | true | Record spans in `trace_span` |
+
+Schema: migration `0012_harness_eval_obs` (tables `eval_run`, `eval_case_result`, `capability_autonomy` seeded at level 2, `trace_span`, `deal_note`; `trace_id`/`span_id` on `jobs` and `agent_run`; handoff trigger `untrusted_content`). Its downgrade turns `untrusted_content` handoffs into `policy_required`.
+
 ### API additions
 
 | Endpoint | Notes |
@@ -255,6 +323,15 @@ Schema for all of this is migration `0011_harness_reliability` (applied by `alem
 | `POST /api/jobs` + `Idempotency-Key` header | Optional. Same key and body within 24 h: the original job, 200, `Idempotent-Replayed: true`. Same key, different body: 409 |
 | `GET /api/jobs/dead-letter` | Dealmaker or analyst (403 otherwise), wall-filtered. `[{job: {...job}, segment_id, seq, status: "dead_letter", attempts, last_error, claimed_by, ended_at}]` |
 | `POST /api/jobs/{id}/retry` | Dealmaker or analyst. Requeues the job's dead-lettered or failed last segment (audited `segment_retried`); 202 with the job, 404 off-wall, 409 if there is nothing to retry |
+| `POST /api/jobs` (0012) | Every job response now carries `trace_id`. 429 + `Retry-After` over the per-user rate; 409 for a capability at autonomy level 0 |
+| `GET /api/evals/runs?capability=&limit=`, `GET /api/evals/runs/{id}` | Any signed-in role. `{id, capability, orchestrator, model_id, golden_sha256, n_cases, score, threshold, passed, metrics, started_at, completed_at, created_by}`; the detail adds `cases: [{case_id, passed, score, confidence, expected, actual, detail, agent_run_id, latency_ms, error}]` |
+| `GET /api/evals/override-rates` | `[{capability, decisions, overrides, rate, window_days}]`, wall-filtered |
+| `GET /api/autonomy` | Any role. `[{capability, level, pinned_model, demoted_at, reason, updated_by, updated_at}]` |
+| `POST /api/autonomy/{capability}/promote` | Admin only; 409 without a passing real-model eval run from the last 7 days or when already at 2; 404 for an unknown capability |
+| `GET /api/prompts` | `[{template_id, version, ref, role, sha256, active, path}]` |
+| `GET /api/traces/{trace_id}` | `{trace_id, spans: [{trace_id, span_id, parent_span_id, name, start, end, duration_ms, attributes, status}]}`, wall-filtered, 404 when none is visible |
+| `GET /api/deals/{id}/notes` | `[{id, deal_id, body, author, source, job_id, created_at}]`, 404 off-wall |
+| `GET /api/metrics` (0012) | Adds `evaluation: {latest_runs: [{capability, eval_run_id, orchestrator, model_id, score, threshold, passed, completed_at}], override_rate: [...], autonomy: [{capability, level, reason, demoted_at}]}` and `security: {injection_suspected, untrusted_content_handoffs}` |
 
 | `GET/POST/DELETE /api/deals/{id}/members` | Wall membership. POST and DELETE are compliance only, take `{"username": ...}`, and are audited |
 | `GET /api/users`, `POST /api/users`, `PATCH /api/users/{id}` | Admin only (see above) |

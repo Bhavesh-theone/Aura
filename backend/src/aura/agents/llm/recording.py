@@ -9,8 +9,14 @@ It is also where the per-segment harness limits live (one recorder per segment r
   llm_max_retries times with backoff; every attempt is its own agent_run row, so lineage
   shows the failures too;
 - more than max_llm_calls_per_segment calls, or a segment running past
-  max_segment_seconds, raises BudgetExceeded (permanent: the segment fails).
+  max_segment_seconds, raises BudgetExceeded (permanent: the segment fails);
+- at most max_concurrent_llm_calls model calls run at once, process-wide (a semaphore: one
+  local CPU model cannot serve two calls usefully).
+
+Each recorded run is also an llm.call span (GenAI semantic-convention attributes), and the
+row carries that span's trace_id and span_id.
 """
+import threading
 import time
 from datetime import datetime
 
@@ -21,7 +27,45 @@ from aura.agents.llm.repair import extract_json
 from aura.core.domain.agent_run import AgentRun
 from aura.core.policy.lineage_policy import canonical, prompt_hash  # noqa: F401
 from aura.core.policy.retry_policy import is_transient
-from aura.core.ports.orchestrator import AgentRunLogError, BudgetExceeded, RunContext
+from aura.core.ports.orchestrator import (AgentRunLogError, BudgetExceeded, RunContext,
+                                          TransientModelError)
+from aura.core.tracing import tracer
+
+_SLOTS_LOCK = threading.Lock()
+_SLOTS: tuple[int, threading.BoundedSemaphore] | None = None
+_HELD = threading.local()
+
+
+class _Slot:
+    """One model-call slot, re-entrant per thread (a call that triggers another call on the
+    same thread must not wait for itself)."""
+
+    def __init__(self, semaphore: threading.BoundedSemaphore | None):
+        self.semaphore = semaphore
+
+    def release(self) -> None:
+        if self.semaphore is not None:
+            _HELD.depth -= 1
+            if _HELD.depth == 0:
+                self.semaphore.release()
+            self.semaphore = None
+
+
+def llm_slot(timeout: float) -> _Slot:
+    """Take a slot of the process-wide model-call semaphore (max_concurrent_llm_calls);
+    TransientModelError if none frees up in time."""
+    global _SLOTS
+    from aura.config import get_settings
+    size = max(1, get_settings().max_concurrent_llm_calls)
+    with _SLOTS_LOCK:
+        if _SLOTS is None or _SLOTS[0] != size:
+            _SLOTS = (size, threading.BoundedSemaphore(size))
+        semaphore = _SLOTS[1]
+    depth = getattr(_HELD, "depth", 0)
+    if depth == 0 and not semaphore.acquire(timeout=timeout):
+        raise TransientModelError("no free model slot (max_concurrent_llm_calls)")
+    _HELD.depth = depth + 1
+    return _Slot(semaphore)
 
 
 def normalise_messages(messages: Any) -> list[dict]:
@@ -61,6 +105,9 @@ class RunRecorder:
         self._sleep = sleep
         self._started = time.monotonic()
         self.calls = 0
+        # The span this recorder was made under (segment.run), for calls CrewAI makes on
+        # another thread.
+        self._parent_span = tracer.current()
 
     def check_budget(self) -> None:
         """Raise BudgetExceeded before a call that would break the segment's limits."""
@@ -79,21 +126,33 @@ class RunRecorder:
                error: str | None = None) -> AgentRun:
         parsed = extract_json(output_text) if output_text and not error else None
         output = {"error": error} if error else {"text": output_text}
+        archetype = f"{getattr(self.context, 'archetype_prefix', '') or ''}{archetype}"
+        digest = {"message_count": len(messages), "messages": messages}
+        if getattr(self.context, "notes", None):
+            digest["notes"] = self.context.notes
+        span = tracer.record("llm.call", started_at, completed_at, {
+            "gen_ai.operation.name": "chat", "gen_ai.system": "ollama"
+            if self.model_id != "stub" else "stub",
+            "gen_ai.request.model": self.model_id, "gen_ai.response.model": self.model_id,
+            "gen_ai.usage.input_tokens": tokens_in, "gen_ai.usage.output_tokens": tokens_out,
+            "aura.archetype": archetype, "aura.prompt_template_id": template_id,
+            "aura.job_id": self.context.job_id, "aura.segment_id": self.context.segment_id,
+            **({"error.type": error.split(":", 1)[0]} if error else {})},
+            status="error" if error else "ok", parent=self._parent_span)
         run = AgentRun(
             id=None, job_id=self.context.job_id, deal_id=self.context.deal_id,
             task_id=self.context.task_id, archetype=archetype, model_id=self.model_id,
             model_version=self.model_version, prompt_template_id=template_id,
-            prompt_hash=prompt_hash(messages),
-            input_digest={"message_count": len(messages), "messages": messages},
-            output=output,
+            prompt_hash=prompt_hash(messages), input_digest=digest, output=output,
             confidence=confidence if confidence is not None else _confidence(parsed),
             tokens_in=tokens_in, tokens_out=tokens_out, cost_inr=0.0, latency_ms=latency_ms,
             started_at=started_at, completed_at=completed_at,
             tool_calls=tool_calls if tool_calls is not None else _tool_calls(parsed),
-            segment_id=self.context.segment_id)
+            segment_id=self.context.segment_id, trace_id=span.trace_id, span_id=span.span_id)
         try:
             saved = self.context.runs.record(run)
             self.last_run_id = saved.id
+            span.set("aura.agent_run_id", saved.id)
             return saved
         except AgentRunLogError:
             raise
@@ -111,6 +170,7 @@ class RunRecorder:
             started = utcnow()
             clock = time.perf_counter()
             in_before, out_before = usage()
+            slot = llm_slot(timeout=max(1.0, self.max_seconds))
             try:
                 result = call()
                 break
@@ -125,8 +185,11 @@ class RunRecorder:
                     pass
                 if attempt >= self.max_retries or not is_transient(exc):
                     raise
+                slot.release()
                 self._sleep(self.retry_backoff * 2 ** attempt)
                 attempt += 1
+            finally:
+                slot.release()
 
         in_after, out_after = usage()
         text = result if isinstance(result, str) else str(result)

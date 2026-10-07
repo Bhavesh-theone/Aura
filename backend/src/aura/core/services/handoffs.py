@@ -20,9 +20,10 @@ from aura.core.ports.repositories import (AuditRepository, DealRepository, Docum
                                           ExtractionRepository, HandoffRepository,
                                           JobRepository, SegmentRepository, TaskRepository)
 from aura.core.services.extractions import apply_verification
+from aura.core.tracing import tracer
 
 
-def create_handoff(
+def _create_handoff(
     *,
     deal_id: int | None,
     job_id: int | None,
@@ -139,7 +140,7 @@ def _apply_extraction(handoff: Handoff, decision: str, actor: str,
     apply_verification(extraction, actor, handoff.deal_id, extractions, audit, now)
 
 
-def resolve_handoff(
+def _resolve_handoff(
     handoff_id: int,
     directive: dict,
     actor: str,
@@ -228,3 +229,26 @@ def escalate_overdue(handoffs: HandoffRepository, audit: AuditRepository,
         events.publish("handoff_escalated", {"handoff_id": h.id, "job_id": h.job_id,
                                              "deal_id": h.deal_id})
     return len(overdue)
+
+
+def create_handoff(**kwargs) -> Handoff:
+    """Traced (span handoff.create); see _create_handoff."""
+    with tracer.span("handoff.create", {"aura.task_type": kwargs.get("task_type"),
+                                        "aura.trigger": kwargs["trigger"].value,
+                                        "aura.job_id": kwargs.get("job_id")},
+                     deal_id=kwargs.get("deal_id")) as span:
+        handoff = _create_handoff(**kwargs)
+        span.set("aura.handoff_id", handoff.id)
+        return handoff
+
+
+create_handoff.__doc__ = _create_handoff.__doc__
+
+
+def resolve_handoff(handoff_id: int, directive: dict, actor: str, actor_role: Role,
+                    *args, **kwargs) -> Handoff:
+    """Traced (span handoff.resolve); see _resolve_handoff."""
+    with tracer.span("handoff.resolve", {"aura.handoff_id": handoff_id, "enduser.id": actor,
+                                         "aura.decision": (directive or {}).get("decision")
+                                         if isinstance(directive, dict) else None}):
+        return _resolve_handoff(handoff_id, directive, actor, actor_role, *args, **kwargs)

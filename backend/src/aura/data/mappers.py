@@ -28,7 +28,7 @@ from aura.data.models.tables import (AgentRunRow, AuditRow, ChecklistItemTemplat
 def job_to_domain(row: JobRow) -> Job:
     return Job(id=row.id, status=JobStatus(row.status), inputs=row.inputs or {},
                deal_id=row.deal_id, result=row.result, created_at=row.created_at,
-               created_by=row.created_by)
+               created_by=row.created_by, trace_id=row.trace_id, span_id=row.span_id)
 
 
 def segment_to_domain(row: SegmentRow) -> Segment:
@@ -150,7 +150,7 @@ def agent_run_to_domain(row: AgentRunRow) -> AgentRun:
         confidence=row.confidence, tokens_in=row.tokens_in, tokens_out=row.tokens_out,
         cost_inr=row.cost_inr, latency_ms=row.latency_ms, started_at=row.started_at,
         completed_at=row.completed_at, tool_calls=list(row.tool_calls or []),
-        segment_id=row.segment_id)
+        segment_id=row.segment_id, trace_id=row.trace_id, span_id=row.span_id)
 
 
 def finding_to_domain(row: FindingRow, deal_id: int) -> Finding:

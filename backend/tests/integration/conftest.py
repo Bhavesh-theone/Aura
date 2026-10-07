@@ -60,6 +60,11 @@ def api(tmp_path, monkeypatch):
     app.dependency_overrides[get_store] = lambda: store
     anchor = tmp_path / "audit_anchor.json"
     app.dependency_overrides[get_anchor_path] = lambda: anchor
+    # The worker re-reads document text when a segment runs: from this test's store.
+    from aura.worker import runner
+    monkeypatch.setattr(runner, "store_factory", lambda: store)
+    from aura.api import rate_limit
+    rate_limit.reset()
     yield Api(TestClient(app), session, store)
     app.dependency_overrides.clear()
     session.close()

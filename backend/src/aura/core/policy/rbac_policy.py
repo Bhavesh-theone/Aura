@@ -20,13 +20,14 @@ class Capability(str, Enum):
     EDIT_REGULATORY_FLAGS = "edit_regulatory_flags"
     VERIFY_EXTRACTION = "verify_extraction"
     MANAGE_USERS = "manage_users"
+    MANAGE_AUTONOMY = "manage_autonomy"        # promote a demoted capability
 
 
 _C = Capability
 _DEAL_WORK = {_C.CREATE_DEAL, _C.EDIT_DEAL_DATA, _C.SUBMIT_JOB, _C.VERIFY_EXTRACTION}
 
 _GRANTS: dict[Role, frozenset[Capability]] = {
-    Role.ADMIN: frozenset({_C.MANAGE_USERS}),
+    Role.ADMIN: frozenset({_C.MANAGE_USERS, _C.MANAGE_AUTONOMY}),
     Role.DEALMAKER: frozenset(_DEAL_WORK | {_C.TRANSITION_DEAL, _C.RESOLVE_HANDOFF,
                                             _C.EDIT_REGULATORY_FLAGS}),
     Role.ANALYST: frozenset(_DEAL_WORK),

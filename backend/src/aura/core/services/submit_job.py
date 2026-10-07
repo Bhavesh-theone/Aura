@@ -13,10 +13,13 @@ from aura.core.domain.segment import Segment
 from aura.core.policy.lineage_policy import canonical
 from aura.core.policy.rbac_policy import Capability, require
 from aura.core.ports.events import EventPublisher
-from aura.core.ports.repositories import (AuditRepository, DealRepository,
-                                          DocumentRepository, FileStore,
+from aura.core.ports.repositories import (AuditRepository, AutonomyRepository,
+                                          DealRepository, DocumentRepository, FileStore,
                                           IdempotencyRepository, JobRepository,
                                           PartyRepository, SegmentRepository)
+from aura.core.services.autonomy import ensure_enabled
+from aura.core.services.context_assembly import ContextLimits, assemble_context
+from aura.core.tracing import tracer
 
 CAPABILITIES = frozenset({"classify_document", "draft_email", "extract_financials"})
 EXCERPT_CHARS = 2000
@@ -25,9 +28,12 @@ IDEMPOTENCY_TTL = timedelta(hours=24)
 
 
 def _enrich(capability: str, inputs: dict, deal, documents: DocumentRepository | None,
-            parties: PartyRepository | None, store: FileStore | None) -> dict:
+            parties: PartyRepository | None, store: FileStore | None,
+            limits: ContextLimits | None = None) -> dict:
     """Load what the agent needs into the segment context, so the orchestrator never
-    reaches into the database itself."""
+    reaches into the database itself. Document text is screened for prompt injection and
+    wrapped as untrusted data; related chunks of the deal's other documents are retrieved
+    (context_assembly). The worker assembles it again when the segment runs."""
     if deal is None:
         raise RuleViolation(f"{capability} needs a deal_id")
     context = {"deal": {"id": deal.id, "external_id": deal.external_id, "name": deal.name,
@@ -37,9 +43,8 @@ def _enrich(capability: str, inputs: dict, deal, documents: DocumentRepository |
         doc = documents.get(doc_id) if isinstance(doc_id, int) and documents else None
         if doc is None or doc.deal_id != deal.id:
             raise NotFound("Document not found on this deal")
-        excerpt = store.read_head(doc.sha256, EXCERPT_CHARS) if store else ""
         context["document"] = {"id": doc.id, "filename": doc.filename,
-                               "current_class": doc.doc_class.value, "excerpt": excerpt,
+                               "current_class": doc.doc_class.value, "excerpt": "",
                                "version": doc.current_version}
     else:
         party_id = inputs.get("party_id")
@@ -49,7 +54,8 @@ def _enrich(capability: str, inputs: dict, deal, documents: DocumentRepository |
             raise NotFound("Party is not on this deal")
         context["party"] = {"id": link.party_id, "display_name": link.display_name,
                             "role": link.role.value}
-    return context
+    return assemble_context({**inputs, **context}, documents, store,
+                            limits or ContextLimits(excerpt_chars=EXCERPT_CHARS))
 
 
 def submit_job(
@@ -65,6 +71,8 @@ def submit_job(
     documents: DocumentRepository | None = None,
     parties: PartyRepository | None = None,
     store: FileStore | None = None,
+    autonomy: AutonomyRepository | None = None,
+    limits: ContextLimits | None = None,
 ) -> Job:
     """Create a job and queue its first segment. Returns immediately - no inference here.
 
@@ -73,6 +81,17 @@ def submit_job(
     segment context here.
     """
     require(actor_role, Capability.SUBMIT_JOB, "run agent jobs")
+    with tracer.span("job.submit", {"enduser.id": actor,
+                                    "aura.capability": inputs.get("capability")},
+                     deal_id=deal_id) as span:
+        job = _submit(inputs, deal_id, actor, jobs, segments, audit, events, deals, documents,
+                      parties, store, autonomy, limits, span)
+        span.set("aura.job_id", job.id)
+        return job
+
+
+def _submit(inputs, deal_id, actor, jobs, segments, audit, events, deals, documents, parties,
+            store, autonomy, limits, span) -> Job:
     now = utcnow()
     deal = None
     if deal_id is not None:
@@ -85,10 +104,12 @@ def submit_job(
     if capability is not None:
         if capability not in CAPABILITIES:
             raise RuleViolation(f"Unknown capability {capability!r}")
-        context.update(_enrich(capability, inputs, deal, documents, parties, store))
+        ensure_enabled(autonomy, capability)
+        context.update(_enrich(capability, inputs, deal, documents, parties, store, limits))
 
     job = jobs.add(Job(id=None, status=JobStatus.PENDING, inputs=inputs,
-                       deal_id=deal_id, result=None, created_at=now, created_by=actor))
+                       deal_id=deal_id, result=None, created_at=now, created_by=actor,
+                       trace_id=span.trace_id, span_id=span.span_id))
 
     segments.add(Segment(id=None, job_id=job.id, seq=1, status=SegmentStatus.QUEUED,
                          context_in=context, context_out=None,

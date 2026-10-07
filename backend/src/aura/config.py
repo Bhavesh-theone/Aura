@@ -42,6 +42,36 @@ class Settings(BaseSettings):
     # How long a model health check is trusted before the worker asks Ollama again.
     orchestrator_health_ttl_seconds: float = 30.0
 
+    # Evaluation and autonomy (RUNNING.md, "Evaluation, autonomy and safety").
+    # Pass mark per capability: classify accuracy, extraction case accuracy, draft rubric.
+    eval_threshold_classify_document: float = 0.7
+    eval_threshold_extract_financials: float = 0.7
+    eval_threshold_draft_email: float = 0.8
+    # Demote a capability when people override it more than this share of decisions...
+    autonomy_max_override_rate: float = 0.20
+    # ...over at least this many decisions in the last autonomy_window_days days.
+    autonomy_min_decisions: int = 20
+    autonomy_window_days: int = 30
+    # Stub eval runs say nothing about the model; they count for autonomy only if this is on.
+    autonomy_counts_stub_evals: bool = False
+    # How often the worker re-checks autonomy (0 turns the periodic check off).
+    autonomy_check_interval_seconds: float = 3600.0
+
+    # Prompt-injection screening: at or above this risk score a result goes to a person.
+    injection_risk_threshold: float = 0.5
+    # Context assembly: total characters of document text in a model's context, the subject
+    # document's excerpt, and how many retrieved chunks of the deal's other documents.
+    max_context_chars: int = 6000
+    context_excerpt_chars: int = 2000
+    retrieval_top_k: int = 4
+
+    # Rate limits: job submissions per user per minute (0 = off), model calls at once.
+    job_submits_per_minute: int = 20
+    max_concurrent_llm_calls: int = 1
+
+    # Local tracing (spans in the trace_span table; nothing is exported).
+    tracing_enabled: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

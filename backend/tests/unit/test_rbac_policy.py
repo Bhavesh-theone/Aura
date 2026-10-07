@@ -23,7 +23,7 @@ def test_every_role_has_a_distinct_set_of_powers():
 
 
 def test_admin_has_no_deal_powers():
-    deal_powers = set(Capability) - {C.MANAGE_USERS}
+    deal_powers = set(Capability) - {C.MANAGE_USERS, C.MANAGE_AUTONOMY}
     assert not any(can(Role.ADMIN, cap) for cap in deal_powers)
 
 

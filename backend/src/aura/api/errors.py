@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from aura.core.domain.errors import (Conflict, Forbidden, GuardBlocked, InvalidTransition,
-                                     NotFound, RuleViolation)
+                                     NotFound, RateLimited, RuleViolation)
 
 
 def evaluation_out(ev) -> dict:
@@ -27,5 +27,11 @@ def register_error_handlers(app: FastAPI) -> None:
         evaluations = [evaluation_out(e) for e in getattr(exc, "evaluations", [])]
         return JSONResponse({"detail": str(exc), "evaluations": evaluations}, status_code=409)
 
+    def limited(_: Request, exc: Exception) -> JSONResponse:
+        retry_after = int(getattr(exc, "retry_after_seconds", 1))
+        return JSONResponse({"detail": str(exc), "retry_after_seconds": retry_after},
+                            status_code=429, headers={"Retry-After": str(retry_after)})
+
+    app.add_exception_handler(RateLimited, limited)
     app.add_exception_handler(InvalidTransition, blocked)
     app.add_exception_handler(GuardBlocked, blocked)

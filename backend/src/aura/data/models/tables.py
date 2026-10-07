@@ -96,6 +96,9 @@ class JobRow(Base):
     deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Tracing (0012): the job.submit span that segments and model runs continue.
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    span_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class SegmentRow(Base):
@@ -457,6 +460,9 @@ class AgentRunRow(Base):
     tool_calls: Mapped[list] = mapped_column(JSON, default=list)
     segment_id: Mapped[int | None] = mapped_column(ForeignKey("segments.id"), nullable=True,
                                                    index=True)
+    # Tracing (0012): the llm.call span this run was recorded under.
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    span_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class WallRow(Base):
@@ -476,6 +482,81 @@ class WallMemberRow(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
                                                server_default=func.now())
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EvalRunRow(Base):
+    """One golden-set evaluation of a capability (python -m aura.evals.run)."""
+    __tablename__ = "eval_run"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    capability: Mapped[str] = mapped_column(String(64), index=True)
+    orchestrator: Mapped[str] = mapped_column(String(16))
+    model_id: Mapped[str] = mapped_column(String(128))
+    golden_sha256: Mapped[str] = mapped_column(String(64))
+    n_cases: Mapped[int] = mapped_column(Integer)
+    score: Mapped[float] = mapped_column(Float)
+    threshold: Mapped[float] = mapped_column(Float)
+    passed: Mapped[bool] = mapped_column(Boolean)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(String(64), default="system")
+
+
+class EvalCaseResultRow(Base):
+    __tablename__ = "eval_case_result"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    eval_run_id: Mapped[int] = mapped_column(ForeignKey("eval_run.id"), index=True)
+    case_id: Mapped[str] = mapped_column(String(64))
+    passed: Mapped[bool] = mapped_column(Boolean)
+    score: Mapped[float] = mapped_column(Float)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expected: Mapped[dict] = mapped_column(JSON, default=dict)
+    actual: Mapped[dict] = mapped_column(JSON, default=dict)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    agent_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_run.id"), nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class CapabilityAutonomyRow(Base):
+    """Autonomy level per capability (SOSPE 9.6): 2 autonomous, 1 supervised, 0 disabled."""
+    __tablename__ = "capability_autonomy"
+    __table_args__ = (CheckConstraint("level BETWEEN 0 AND 2", name="ck_level_valid"),)
+    capability: Mapped[str] = mapped_column(String(64), primary_key=True)
+    level: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    pinned_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    demoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TraceSpanRow(Base):
+    """A finished span (aura.core.tracing), written locally; nothing is exported. deal_id is
+    plain (no foreign key): spans are telemetry and outlive what they describe."""
+    __tablename__ = "trace_span"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trace_id: Mapped[str] = mapped_column(String(32), index=True)
+    span_id: Mapped[str] = mapped_column(String(16))
+    parent_span_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    name: Mapped[str] = mapped_column(String(64))
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(8))
+    deal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+
+class DealNoteRow(Base):
+    """Internal notes (deals MCP tool add_internal_note)."""
+    __tablename__ = "deal_note"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    author: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(32))
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 # create_all installs the same append-only triggers the migration does.

@@ -6,6 +6,7 @@ that viewer is on.
 """
 import sqlite3
 import threading
+from dataclasses import replace
 from datetime import datetime
 
 from sqlalchemy import func, or_, select, update
@@ -13,6 +14,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from aura.core.clock import utcnow
+from aura.core.tracing import current_trace
 from aura.core.domain.agent_run import AgentRun
 from aura.core.domain.errors import Conflict
 from aura.core.domain.job import IdempotencyRecord
@@ -43,7 +45,7 @@ class SqlJobRepository:
     def add(self, job: Job) -> Job:
         row = JobRow(status=job.status.value, inputs=job.inputs, result=job.result,
                      deal_id=job.deal_id, created_at=job.created_at,
-                     created_by=job.created_by)
+                     created_by=job.created_by, trace_id=job.trace_id, span_id=job.span_id)
         self.s.add(row)
         self.s.flush()
         self.s.refresh(row)
@@ -153,6 +155,25 @@ class SqlSegmentRepository:
         rows = self.s.scalars(select(SegmentRow).where(SegmentRow.status == status.value)
                               .order_by(SegmentRow.id.desc())).all()
         return [mappers.segment_to_domain(r) for r in rows]
+
+    def hold_claim(self, segment_id: int, claimed_by: str | None, attempts: int) -> bool:
+        """A no-op UPDATE that only matches while the claim is unchanged. Being a write, it
+        takes SQLite's write lock for the rest of the transaction, so a recovery sweep cannot
+        requeue the segment between this check and the outcome's commit."""
+        owner = SegmentRow.claimed_by.is_(None) if claimed_by is None \
+            else SegmentRow.claimed_by == claimed_by
+        try:
+            result = self.s.execute(
+                update(SegmentRow)
+                .where(SegmentRow.id == segment_id, owner, SegmentRow.attempts == attempts,
+                       SegmentRow.status == SegmentStatus.RUNNING.value)
+                .values(claimed_by=SegmentRow.claimed_by)
+                .execution_options(synchronize_session=False))
+        except OperationalError as exc:
+            if _locked(exc):
+                return False
+            raise
+        return result.rowcount == 1
 
 
 class SqlTaskRepository:
@@ -278,7 +299,7 @@ class SqlAgentRunRepository:
             tokens_in=run.tokens_in, tokens_out=run.tokens_out, cost_inr=run.cost_inr,
             latency_ms=run.latency_ms, started_at=run.started_at,
             completed_at=run.completed_at, tool_calls=run.tool_calls,
-            segment_id=run.segment_id)
+            segment_id=run.segment_id, trace_id=run.trace_id, span_id=run.span_id)
         self.s.add(row)
         self.s.flush()
         self.s.refresh(row)
@@ -318,6 +339,12 @@ class SqlAuditRepository:
         self.s, self.viewer = session, check_viewer(viewer)
 
     def append(self, entry: AuditEntry) -> AuditEntry:
+        # Rows written inside a traced operation carry its trace (before hashing, so the
+        # chain covers them).
+        trace_id, span_id = current_trace()
+        if trace_id is not None and "trace_id" not in (entry.payload or {}):
+            entry = replace(entry, payload={**(entry.payload or {}), "trace_id": trace_id,
+                                            "span_id": span_id})
         # The lock keeps two threads (API + worker) from reading the same prev_hash. SQLite
         # allows one writer at a time, so a loser fails instead of forking the chain.
         with _AUDIT_LOCK:

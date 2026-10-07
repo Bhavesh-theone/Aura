@@ -26,3 +26,6 @@ class AgentRun:
     tool_calls: list = field(default_factory=list)
     # The segment the run belonged to (lineage even before a task exists).
     segment_id: int | None = None
+    # The llm.call span the run was recorded under (migration 0012).
+    trace_id: str | None = None
+    span_id: str | None = None

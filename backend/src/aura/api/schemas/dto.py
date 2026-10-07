@@ -32,6 +32,8 @@ class JobResponse(BaseModel):
     deal_id: int | None
     created_at: datetime
     created_by: str | None = None
+    # The job's trace (GET /api/traces/{trace_id}).
+    trace_id: str | None = None
 
 
 class DeadLetterResponse(BaseModel):

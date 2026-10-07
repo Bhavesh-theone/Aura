@@ -26,12 +26,12 @@ def test_traced_call_records_before_returning_output():
     rec = RunRecorder(_ctx(sink), "qwen3.5:4b", "abc123")
     usage = iter([(0, 0), (12, 5)])
     out = rec.traced(lambda: '{"confidence": 0.8, "tool": "send_email", "arguments": {}}',
-                     archetype="Drafter", template_id="crew.drafter.v1",
+                     archetype="Drafter", template_id="crew.drafter@v1",
                      messages=[{"role": "user", "content": "write"}], usage=lambda: next(usage))
     (run,) = sink.runs
     assert out.startswith("{") and run.model_id == "qwen3.5:4b"
     assert run.model_version == "abc123" and run.archetype == "Drafter"
-    assert run.prompt_template_id == "crew.drafter.v1"
+    assert run.prompt_template_id == "crew.drafter@v1"
     assert run.prompt_hash == prompt_hash([{"role": "user", "content": "write"}])
     assert run.input_digest["messages"] == [{"role": "user", "content": "write"}]
     assert (run.tokens_in, run.tokens_out, run.cost_inr) == (12, 5, 0.0)

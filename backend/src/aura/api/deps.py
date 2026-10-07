@@ -22,6 +22,8 @@ from aura.data.repositories.sql_deals import (SqlConditionRepository, SqlDealRep
                                               SqlGuardRepository, SqlMandateRepository,
                                               SqlPartyRepository, SqlSignoffRepository,
                                               SqlStageHistoryRepository, SqlWallRepository)
+from aura.data.repositories.sql_harness import (SqlAutonomyRepository, SqlEvalRepository,
+                                                SqlNoteRepository, SqlTraceRepository)
 from aura.data.uow import SqlUnitOfWork
 from aura.data.verify_audit import default_anchor_path
 
@@ -184,6 +186,25 @@ def get_extractions(s: Session = Depends(get_session),
 def get_signoffs(s: Session = Depends(get_session),
                  user: User = Depends(current_user)) -> SqlSignoffRepository:
     return SqlSignoffRepository(s, user.username)
+
+
+def get_autonomy(s: Session = Depends(get_session)) -> SqlAutonomyRepository:
+    """Deal-less configuration: the same for every viewer."""
+    return SqlAutonomyRepository(s)
+
+
+def get_evals(s: Session = Depends(get_session)) -> SqlEvalRepository:
+    return SqlEvalRepository(s)
+
+
+def get_notes(s: Session = Depends(get_session),
+              user: User = Depends(current_user)) -> SqlNoteRepository:
+    return SqlNoteRepository(s, user.username)
+
+
+def get_traces(s: Session = Depends(get_session),
+               user: User = Depends(current_user)) -> SqlTraceRepository:
+    return SqlTraceRepository(s, user.username)
 
 
 def get_anchor_path() -> Path | None:

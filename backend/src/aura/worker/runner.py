@@ -1,3 +1,4 @@
+import functools
 import logging
 import os
 import socket
@@ -17,10 +18,15 @@ from aura.core.ports.events import EventPublisher
 from aura.core.ports.orchestrator import Orchestrator
 from aura.core.services.notifying_audit import NotifyingAudit
 from aura.core.services.handoffs import escalate_overdue
+from aura.core.services.autonomy import DemotionRules, apply_demotions
+from aura.core.services.context_assembly import ContextLimits, assemble_context
 from aura.core.services.run_segment import run_segment
 from aura.core.services.segment_reliability import (defer_for_budget, recover_stale_segments,
                                                     start_of_utc_day)
 from aura.data.engine import SessionLocal
+from aura.data.filestore import LocalFileStore
+from aura.data.spans import flush_spans
+from aura.data.repositories.sql_harness import SqlAutonomyRepository, SqlEvalRepository
 from aura.data.repositories.sql import (SqlAgentRunRepository, SqlAuditRepository,
                                         SqlHandoffRepository, SqlJobRepository,
                                         SqlSegmentRepository, SqlTaskRepository)
@@ -52,6 +58,26 @@ def retry_policy() -> RetryPolicy:
     return RetryPolicy(max_attempts=s.segment_max_attempts,
                        base_backoff_seconds=s.segment_backoff_seconds,
                        lease_seconds=s.segment_lease_seconds)
+
+
+def store_factory():
+    """Where document text is read from (tests point this at their temporary store)."""
+    return LocalFileStore()
+
+
+def context_limits() -> ContextLimits:
+    s = get_settings()
+    return ContextLimits(max_chars=s.max_context_chars, excerpt_chars=s.context_excerpt_chars,
+                         retrieval_top_k=s.retrieval_top_k,
+                         injection_threshold=s.injection_risk_threshold)
+
+
+def demotion_rules() -> DemotionRules:
+    s = get_settings()
+    return DemotionRules(max_override_rate=s.autonomy_max_override_rate,
+                         min_decisions=s.autonomy_min_decisions,
+                         window_days=s.autonomy_window_days,
+                         include_stub_evals=s.autonomy_counts_stub_evals)
 
 
 def _choose(orchestrator) -> tuple[Orchestrator, str | None]:
@@ -114,6 +140,13 @@ def run_once(session: Session, orchestrator: Orchestrator | OrchestratorSelector
                          "reason": fallback_reason}))
             uow.commit()
 
+        # Context is re-read as the job's user, so their walls (as they are now) apply to
+        # what the model sees, not the worker's SYSTEM scope.
+        owner = jobs.get(claimed.job_id)
+        viewer = (owner.created_by or "") if owner is not None else ""
+        refresh = functools.partial(assemble_context,
+                                    documents=SqlDocumentRepository(session, viewer),
+                                    store=store_factory(), limits=context_limits())
         outcome = run_segment(
             segment_id=claimed.id,
             orchestrator=chosen,
@@ -130,9 +163,13 @@ def run_once(session: Session, orchestrator: Orchestrator | OrchestratorSelector
             documents=SqlDocumentRepository(session, SYSTEM),
             retry_policy=retry_policy(),
             run_links=runs,
+            autonomy=SqlAutonomyRepository(session),
+            refresh_context=refresh,
+            injection_threshold=settings.injection_risk_threshold,
         )
         if outcome in ("retry", "dead_letter") and hasattr(orchestrator, "invalidate"):
             orchestrator.invalidate()  # the model may be gone: check again next segment
+        flush_spans(session)  # segment.run ends after the outcome's commit
     except Exception:
         uow.rollback()
         raise
@@ -171,6 +208,24 @@ def sweep_stale_segments(session: Session, events: EventPublisher,
     return count
 
 
+def sweep_autonomy(session: Session, events: EventPublisher) -> list[dict]:
+    """Demote capabilities whose latest eval failed or whose override rate is too high."""
+    uow = SqlUnitOfWork(session)
+    try:
+        deferred = uow.defer(events)
+        changes = apply_demotions(SqlAutonomyRepository(session), SqlEvalRepository(session),
+                                  SqlHandoffRepository(session, SYSTEM),
+                                  NotifyingAudit(SqlAuditRepository(session, SYSTEM), deferred),
+                                  demotion_rules())
+        uow.commit()
+    except Exception:
+        uow.rollback()
+        raise
+    for change in changes:
+        logger.warning("autonomy demoted: %s", change)
+    return changes
+
+
 def refresh_audit_anchor() -> None:
     """Keep the anchor close to the audit head, so tail deletion is caught soon after."""
     with SessionLocal() as session:
@@ -181,7 +236,17 @@ def refresh_audit_anchor() -> None:
 
 def _loop(orchestrator, events: EventPublisher, stop: threading.Event) -> None:
     last_anchor = time.monotonic()
+    last_autonomy: float | None = None
     while not stop.is_set():
+        interval = get_settings().autonomy_check_interval_seconds
+        if interval > 0 and (last_autonomy is None
+                             or time.monotonic() - last_autonomy >= interval):
+            last_autonomy = time.monotonic()
+            try:
+                with SessionLocal() as session:
+                    sweep_autonomy(session, events)
+            except Exception:
+                logger.exception("autonomy sweep failed")
         did_work = False
         with SessionLocal() as session:
             try:

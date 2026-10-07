@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from aura.agents.factory import OrchestratorSelector
 from aura.api.errors import register_error_handlers
 from aura.api.routers import (activity, agent_runs, audit, auth, dashboard, deals, diligence,
-                              documents, extractions, handoffs, jobs, metrics, parties,
-                              users)
+                              documents, extractions, handoffs, harness, jobs, metrics,
+                              parties, users)
 from aura.api.security import decode_token
 from aura.api.ws.hub import hub
 from aura.data.engine import SessionLocal
@@ -32,7 +32,8 @@ app.include_router(handoffs.router)
 app.include_router(agent_runs.router)
 app.include_router(dashboard.router)
 app.include_router(activity.router)
-for _r in (deals, parties, documents, diligence, audit, users, metrics, extractions):
+for _r in (deals, parties, documents, diligence, audit, users, metrics, extractions,
+           harness):
     app.include_router(_r.router)
 register_error_handlers(app)
 
@@ -51,6 +52,9 @@ def _check_audit_anchor() -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     logging.basicConfig(level=logging.INFO)
+    from aura.config import get_settings
+    from aura.core.tracing import tracer
+    tracer.configure(get_settings().tracing_enabled)
     seed()
     _check_audit_anchor()
     hub.bind_loop(asyncio.get_running_loop())

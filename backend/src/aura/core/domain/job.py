@@ -13,6 +13,9 @@ class Job:
     result: dict | None
     created_at: datetime
     created_by: str | None = None
+    # The job.submit span: segments and model runs continue this trace (migration 0012).
+    trace_id: str | None = None
+    span_id: str | None = None
 
 
 @dataclass

@@ -129,13 +129,24 @@ def _confidence(action: ProposedAction) -> float:
     return 0.5
 
 
+# For a result built on suspicious text, the policy recommends the option that changes nothing.
+_CONSERVATIVE = {"classify_document": "keep", "extract_financials": "discard"}
+
+
 def build_gate_package(action: ProposedAction, now: datetime,
                        cap_inr: int = DEFAULT_MATERIALITY_CAP_INR,
-                       escalate_after: timedelta = DEFAULT_ESCALATION) -> dict:
+                       escalate_after: timedelta = DEFAULT_ESCALATION,
+                       untrusted: dict | None = None, notes: list[str] | None = None) -> dict:
     """A valid bot_to_human context package for a gated tool call, built from the proposed
-    action alone. The recommendation comes from gate_policy, not from the model."""
+    action alone. The recommendation comes from gate_policy, not from the model.
+
+    `untrusted` is the context's screening record when it looked like a prompt injection: the
+    package then says so, lists the matched rules as evidence and recommends the
+    conservative option. `notes` are extra lines for what_happened (autonomy level 1)."""
     options = _options_for(action)
-    if action.tool == "classify_document":
+    if untrusted:
+        recommended = _CONSERVATIVE.get(action.tool, "reject")
+    elif action.tool == "classify_document":
         recommended = ("confirm" if action.arguments.get("proposed_class")
                        != action.arguments.get("current_class") else "keep")
     elif action.tool == "extract_financials":
@@ -150,19 +161,32 @@ def build_gate_package(action: ProposedAction, now: datetime,
             "so it is draft-only and a human must decide.")
     elif action.category is ActionCategory.UNKNOWN:
         what_happened.append("The tool is not mapped in the gate policy, so it is gated.")
+    if untrusted:
+        what_happened.append(
+            "The text the agent read looks like a prompt injection (risk "
+            f"{untrusted.get('risk_score', 0):.2f}; rules: "
+            f"{', '.join(untrusted.get('matched_rules') or []) or 'none'}), so a person must "
+            "check the result before anything uses it.")
+    what_happened.extend(notes or [])
     return {
         "what_happened": what_happened,
         "evidence": [{"type": "proposed_action", "tool": action.tool,
                       "category": action.category.value, "arguments": action.arguments},
                      *([{"type": "additional_gated_attempts",
                          "additional_gated_attempts": action.additional_gated_attempts}]
-                       if action.additional_gated_attempts else [])],
+                       if action.additional_gated_attempts else []),
+                     *([{"type": "untrusted_content",
+                         "risk_score": untrusted.get("risk_score"),
+                         "matched_rules": untrusted.get("matched_rules") or [],
+                         "sources": [i.get("source") for i in untrusted.get("items") or []
+                                     if i.get("matched_rules")]}]
+                       if untrusted else [])],
 
         "decision_required": {
             "question": f"Decide on the proposed action: {action.summary}"[:300],
             "options": options,
             "recommendation": recommended,
-            "confidence": _confidence(action),
+            "confidence": min(_confidence(action), 0.5) if untrusted else _confidence(action),
         },
         "if_you_do_nothing": {
             "consequence": f"Job stays paused; escalates to {ESCALATES_TO_ROLE} at "

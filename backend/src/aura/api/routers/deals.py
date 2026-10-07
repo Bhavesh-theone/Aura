@@ -4,6 +4,9 @@ from aura.api.deps import (current_user, get_audit, get_deals, get_diligence, ge
                            get_history, get_mandates, get_parties, get_signoffs, get_users,
                            get_walls)
 from aura.api.errors import evaluation_out
+from aura.api.deps import get_notes
+from aura.api.schemas.harness import NoteOut
+from aura.core.services.notes import list_notes
 from aura.api.schemas.deals import (CreateDealRequest, CreateMandateRequest, DealDetailOut,
                                     DealOut, DealPartyOut, EvaluationOut, HistoryOut,
                                     LinkPartyRequest, MandateOut, MemberOut, MemberRequest,
@@ -151,6 +154,14 @@ def add_signoff(deal_id: int, body: SignoffRequest, user: User = Depends(current
                 audit=Depends(get_audit)):
     return _signoff_out(compliance.add_signoff(deal_id, body.note, user.username, user.role,
                                                deals, signoffs, audit))
+
+
+@router.get("/{deal_id}/notes", response_model=list[NoteOut])
+def get_notes_for_deal(deal_id: int, user: User = Depends(current_user),
+                       deals=Depends(get_deals), notes=Depends(get_notes)):
+    """Internal notes on the deal (written by the add_internal_note MCP tool), oldest first.
+    404 if you are not on the deal's wall."""
+    return [NoteOut(**vars(n)) for n in list_notes(deal_id, deals, notes)]
 
 
 def _members_out(members) -> list[MemberOut]:
