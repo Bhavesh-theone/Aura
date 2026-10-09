@@ -4,13 +4,11 @@ None of these commit: they flush, and the unit of work that owns the session com
 Deal-scoped ones take a `viewer` (see aura.data.walls) and only ever see deals behind walls
 that viewer is on.
 """
-import sqlite3
-import threading
 from dataclasses import replace
 from datetime import datetime
 
-from sqlalchemy import func, or_, select, update
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy import func, insert, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from aura.core.clock import utcnow
@@ -27,20 +25,16 @@ from aura.core.domain.user import User
 from aura.data import mappers
 from aura.data.models.tables import (AgentRunRow, AuditRow, HandoffRow, IdempotencyKeyRow,
                                      JobRow, SegmentRow, TaskRow, UserRow)
-from aura.data.walls import Viewer, check_viewer, walled
+from aura.data.walls import Viewer, bind_viewer, walled
 
-_AUDIT_LOCK = threading.Lock()
-# UPDATE ... RETURNING needs SQLite 3.35 (other databases have it).
-_HAS_RETURNING = sqlite3.sqlite_version_info >= (3, 35)
-
-
-def _locked(exc: OperationalError) -> bool:
-    return "locked" in str(exc).lower() or "busy" in str(exc).lower()
+# Transaction-scoped advisory lock that serialises audit appends across every process (API,
+# worker, eval runs): two appenders can never read the same prev_hash and fork the chain.
+_AUDIT_LOCK_KEY = 0x41555241  # "AURA"
 
 
 class SqlJobRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def add(self, job: Job) -> Job:
         row = JobRow(status=job.status.value, inputs=job.inputs, result=job.result,
@@ -108,30 +102,19 @@ class SqlSegmentRepository:
 
     def claim_next_queued(self, worker_id: str = "worker",
                           now: datetime | None = None) -> Segment | None:
-        """One conditional UPDATE takes the oldest runnable queued segment, so two workers
-        (or threads) can never both claim it: the loser's UPDATE matches no row. Call it
-        first in a fresh transaction and commit straight after, so the write lock is held
-        for as short a time as possible."""
+        """Take the oldest runnable queued segment. SELECT ... FOR UPDATE SKIP LOCKED picks
+        and locks it, so a concurrent claimer skips to the next row instead of waiting, and
+        the UPDATE re-checks that it is still queued. Commit straight after."""
         now = now or utcnow()
-        values = {"status": SegmentStatus.RUNNING.value, "claimed_by": worker_id,
-                  "claimed_at": now, "attempts": SegmentRow.attempts + 1}
-        if _HAS_RETURNING:
-            stmt = (update(SegmentRow)
-                    .where(SegmentRow.id == self._claimable(now).scalar_subquery(),
-                           SegmentRow.status == SegmentStatus.QUEUED.value)
-                    .values(**values).returning(SegmentRow.id)
-                    .execution_options(synchronize_session=False))
-            claimed_id = self.s.execute(stmt).scalar_one_or_none()
-        else:  # SQLite < 3.35: pick, then update only if it is still queued
-            claimed_id = None
-            candidate = self.s.scalar(self._claimable(now))
-            if candidate is not None:
-                result = self.s.execute(
-                    update(SegmentRow)
-                    .where(SegmentRow.id == candidate,
-                           SegmentRow.status == SegmentStatus.QUEUED.value)
-                    .values(**values).execution_options(synchronize_session=False))
-                claimed_id = candidate if result.rowcount == 1 else None
+        candidate = self._claimable(now).with_for_update(skip_locked=True).scalar_subquery()
+        stmt = (update(SegmentRow)
+                .where(SegmentRow.id == candidate,
+                       SegmentRow.status == SegmentStatus.QUEUED.value)
+                .values(status=SegmentStatus.RUNNING.value, claimed_by=worker_id,
+                        claimed_at=now, attempts=SegmentRow.attempts + 1)
+                .returning(SegmentRow.id)
+                .execution_options(synchronize_session=False))
+        claimed_id = self.s.execute(stmt).scalar_one_or_none()
         if claimed_id is None:
             return None
         row = self.s.get(SegmentRow, claimed_id, populate_existing=True)
@@ -158,27 +141,22 @@ class SqlSegmentRepository:
 
     def hold_claim(self, segment_id: int, claimed_by: str | None, attempts: int) -> bool:
         """A no-op UPDATE that only matches while the claim is unchanged. Being a write, it
-        takes SQLite's write lock for the rest of the transaction, so a recovery sweep cannot
-        requeue the segment between this check and the outcome's commit."""
+        locks the row for the rest of the transaction, so a recovery sweep cannot requeue the
+        segment between this check and the outcome's commit."""
         owner = SegmentRow.claimed_by.is_(None) if claimed_by is None \
             else SegmentRow.claimed_by == claimed_by
-        try:
-            result = self.s.execute(
-                update(SegmentRow)
-                .where(SegmentRow.id == segment_id, owner, SegmentRow.attempts == attempts,
-                       SegmentRow.status == SegmentStatus.RUNNING.value)
-                .values(claimed_by=SegmentRow.claimed_by)
-                .execution_options(synchronize_session=False))
-        except OperationalError as exc:
-            if _locked(exc):
-                return False
-            raise
+        result = self.s.execute(
+            update(SegmentRow)
+            .where(SegmentRow.id == segment_id, owner, SegmentRow.attempts == attempts,
+                   SegmentRow.status == SegmentStatus.RUNNING.value)
+            .values(claimed_by=SegmentRow.claimed_by)
+            .execution_options(synchronize_session=False))
         return result.rowcount == 1
 
 
 class SqlTaskRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def add(self, task: Task) -> Task:
         row = TaskRow(deal_id=task.deal_id, job_id=task.job_id, task_type=task.task_type,
@@ -204,7 +182,7 @@ class SqlTaskRepository:
 
 class SqlHandoffRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def _select(self):
         stmt = (select(HandoffRow, TaskRow.job_id, TaskRow.task_type)
@@ -263,8 +241,8 @@ class SqlHandoffRepository:
 
     def mark_resolved(self, handoff: Handoff) -> bool:
         """Resolve only while the row is still open or escalated. The UPDATE's WHERE is the
-        check, so of two concurrent resolves exactly one matches; the other sees rowcount 0
-        (or, while the winner still holds SQLite's write lock, 'database is locked') and
+        check, so of two concurrent resolves exactly one matches: the other waits on the
+        winner's row lock, re-reads the committed row, no longer matches (rowcount 0) and
         loses. The viewer's walls still apply: an off-wall handoff never matches."""
         visible = walled(select(HandoffRow.id).where(HandoffRow.id == handoff.id), self.viewer,
                          HandoffRow.deal_id, include_unattached=True)
@@ -275,12 +253,7 @@ class SqlHandoffRepository:
                 .values(status=HandoffStatus.RESOLVED.value, directive=handoff.directive,
                         resolved_by=handoff.resolved_by, resolved_at=handoff.resolved_at)
                 .execution_options(synchronize_session=False))
-        try:
-            won = self.s.execute(stmt).rowcount == 1
-        except OperationalError as exc:
-            if _locked(exc):
-                return False
-            raise
+        won = self.s.execute(stmt).rowcount == 1
         if won:
             self.s.get(HandoffRow, handoff.id, populate_existing=True)
         return won
@@ -288,7 +261,7 @@ class SqlHandoffRepository:
 
 class SqlAgentRunRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def add(self, run: AgentRun) -> AgentRun:
         row = AgentRunRow(
@@ -336,7 +309,7 @@ class SqlAuditRepository:
     """Append-only by design - no update or delete method exists."""
 
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def append(self, entry: AuditEntry) -> AuditEntry:
         # Rows written inside a traced operation carry its trace (before hashing, so the
@@ -345,19 +318,22 @@ class SqlAuditRepository:
         if trace_id is not None and "trace_id" not in (entry.payload or {}):
             entry = replace(entry, payload={**(entry.payload or {}), "trace_id": trace_id,
                                             "span_id": span_id})
-        # The lock keeps two threads (API + worker) from reading the same prev_hash. SQLite
-        # allows one writer at a time, so a loser fails instead of forking the chain.
-        with _AUDIT_LOCK:
-            prev = self.s.scalars(select(AuditRow.row_hash)
-                                  .order_by(AuditRow.id.desc()).limit(1)).first() or GENESIS_HASH
-            row = AuditRow(job_id=entry.job_id, deal_id=entry.deal_id, actor=entry.actor,
-                           action=entry.action, payload=entry.payload,
-                           created_at=entry.created_at, prev_hash=prev,
-                           row_hash=compute_row_hash(prev, entry))
-            self.s.add(row)
-            self.s.flush()
-        self.s.refresh(row)
-        return mappers.audit_to_domain(row)
+        # The lock is held until this transaction ends, so the next appender reads this row
+        # as its head. The head comes from aura_audit_head() (SECURITY DEFINER): the newest
+        # row may be on a deal this viewer cannot see, and the chain must still link to it.
+        self.s.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _AUDIT_LOCK_KEY})
+        prev = self.s.scalar(text("SELECT aura_audit_head()")) or GENESIS_HASH
+        # No RETURNING / read-back: RLS lets anyone append but only wall members read, and an
+        # actor who just left a deal's wall must still record that.
+        new_id = self.s.scalar(text("SELECT nextval(pg_get_serial_sequence("
+                                    "'audit_entries', 'id'))"))
+        row_hash = compute_row_hash(prev, entry)
+        self.s.execute(insert(AuditRow).values(
+            id=new_id, job_id=entry.job_id, deal_id=entry.deal_id, actor=entry.actor,
+            action=entry.action, payload=entry.payload, created_at=entry.created_at,
+            prev_hash=prev, row_hash=row_hash))
+        return replace(entry, id=new_id, payload=entry.payload or {}, prev_hash=prev,
+                       row_hash=row_hash)
 
     def list_recent(self, limit: int = 100) -> list[AuditEntry]:
         stmt = walled(select(AuditRow), self.viewer, AuditRow.deal_id, include_unattached=True)

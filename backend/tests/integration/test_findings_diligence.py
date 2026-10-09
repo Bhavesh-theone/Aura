@@ -34,7 +34,7 @@ def test_finding_roundtrip_and_payload(api):
     assert api.call("GET", f"/api/deals/{deal}/findings").json() == [f]
     audit = api.session.execute(text("SELECT payload, deal_id FROM audit_entries WHERE action "
                                      "= 'finding_created'")).one()
-    assert '"adjustment"' in audit[0] and audit[1] == deal
+    assert audit[0]["finding_type"] == "adjustment" and audit[1] == deal
 
 
 def test_a_valuation_finding_needs_a_quantified_impact(api):
@@ -81,13 +81,13 @@ def test_the_database_requires_an_impact_for_a_valuation_finding(api):
            "quantified_impact_inr, affects_valuation, raised_by, raised_at) VALUES "
            "(:i, :t, 'd', :q, :a, 'u', '2026-10-06')")
     with pytest.raises(Exception, match="ck_finding_impact_required"):
-        api.session.execute(text(sql), {"i": item, "t": "red_flag", "q": None, "a": 1})
+        api.session.execute(text(sql), {"i": item, "t": "red_flag", "q": None, "a": True})
     api.session.rollback()
     with pytest.raises(Exception, match="ck_finding_type_valid"):
-        api.session.execute(text(sql), {"i": item, "t": "gossip", "q": None, "a": 0})
+        api.session.execute(text(sql), {"i": item, "t": "gossip", "q": None, "a": False})
     api.session.rollback()
-    api.session.execute(text(sql), {"i": item, "t": "red_flag", "q": 10, "a": 1})
-    api.session.execute(text(sql), {"i": item, "t": "red_flag", "q": None, "a": 0})
+    api.session.execute(text(sql), {"i": item, "t": "red_flag", "q": 10, "a": True})
+    api.session.execute(text(sql), {"i": item, "t": "red_flag", "q": None, "a": False})
 
 
 # ------------------------------------------------------------ diligence CHECKs at DB level
@@ -153,7 +153,8 @@ def test_item_templates_belong_to_a_template_with_a_layer_and_version(api):
     assert orphans == 0
     mismatched = api.session.execute(text(
         "SELECT COUNT(*) FROM checklist_item_template i JOIN checklist_template t ON "
-        "t.id = i.template_id WHERE i.transaction_class IS NOT t.transaction_class")).scalar()
+        "t.id = i.template_id "
+        "WHERE i.transaction_class IS DISTINCT FROM t.transaction_class")).scalar()
     assert mismatched == 0
 
 
@@ -162,7 +163,7 @@ def test_template_rows_are_checked(api):
         api.session.execute(text("INSERT INTO checklist_template (layer, version, name) "
                                  "VALUES ('galaxy', 1, 'x')"))
     api.session.rollback()
-    with pytest.raises(Exception, match="FOREIGN KEY"):
+    with pytest.raises(Exception, match="foreign key"):
         api.session.execute(text(
             "INSERT INTO checklist_item_template (template_id, category, prompt, "
             "default_severity) VALUES (999, 'c', 'p', 'standard')"))

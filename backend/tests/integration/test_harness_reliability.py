@@ -20,7 +20,6 @@ from aura.core.domain.segment import ProposedAction, Segment
 from aura.core.policy.handoff_policy import build_gate_package
 from aura.core.policy.retry_policy import RetryPolicy
 from aura.core.services.handoffs import create_handoff, resolve_handoff
-from aura.data.engine import Base, make_engine
 from aura.data.repositories.sql import (SqlAuditRepository, SqlHandoffRepository,
                                         SqlJobRepository, SqlSegmentRepository,
                                         SqlTaskRepository)
@@ -29,6 +28,7 @@ from aura.data.walls import SYSTEM
 from aura.worker.runner import run_once, sweep_stale_segments
 from aura.worker.stub_orchestrator import StubOrchestrator
 from tests.integration.helpers import DIRECTIVE, NullEvents, make_deal, run_worker, submit
+from tests.integration.pgtest import fresh_engine
 
 
 class Recorder:
@@ -73,11 +73,9 @@ def fast_retries(monkeypatch):
 # ------------------------------------------------------------------ atomic claim (cat 8)
 
 @pytest.fixture()
-def file_engine(tmp_path):
-    engine = make_engine(f"sqlite:///{(tmp_path / 'race.db').as_posix()}")
-    Base.metadata.create_all(engine)
-    yield engine
-    engine.dispose()
+def file_engine():
+    """The real database, shared by several sessions (threads) at once."""
+    return fresh_engine()
 
 
 def _queue(session, n):
@@ -156,7 +154,7 @@ def test_a_model_that_stays_down_is_retried_then_dead_lettered(api, fast_retries
     assert api.call("GET", f"/api/jobs/{job['id']}").json()["status"] == "failed"
     assert len(_actions(api, "segment_retry_scheduled")) == 2
     (dead,) = _actions(api, "segment_dead_lettered")
-    assert '"attempts": 3' in dead
+    assert dead["attempts"] == 3
     assert ("segment_dead_lettered", {"job_id": job["id"], "deal_id": deal,
                                       "segment_id": 1}) in events.published
 
@@ -206,7 +204,7 @@ def test_an_orphaned_running_segment_is_recovered_at_the_next_sweep(api):
     assert _segment(api, job["id"])[:2] == ("queued", 1)
     assert api.call("GET", f"/api/jobs/{job['id']}").json()["status"] == "pending"
     (payload,) = _actions(api, "segment_recovered")
-    assert "dead-worker" in payload
+    assert "dead-worker" in payload["error"]
     run_worker(api)
     assert api.call("GET", f"/api/jobs/{job['id']}").json()["status"] == "awaiting_approval"
     assert api.call("GET", "/api/metrics").json()["reliability"]["recovered_segments"] == 1
@@ -236,7 +234,7 @@ def test_the_daily_model_budget_defers_new_segments_to_tomorrow(api, monkeypatch
     assert str(not_before).startswith(tomorrow)
     assert run_once(api.session, StubOrchestrator(), NullEvents()) is False
     (payload,) = _actions(api, "budget_deferred")
-    assert '"daily_limit": 1' in payload
+    assert payload["daily_limit"] == 1
     assert api.call("GET", f"/api/jobs/{first['id']}").json()["status"] == "awaiting_approval"
     assert api.call("GET", "/api/metrics").json()["reliability"]["budget_deferrals"] == 1
     shown = api.call("GET", f"/api/jobs/{second['id']}").json()
@@ -252,7 +250,7 @@ def test_with_ollama_down_a_segment_runs_on_the_stub_and_says_so(api):
     assert run_once(api.session, selector, NullEvents()) is True
     assert api.call("GET", f"/api/jobs/{job['id']}").json()["status"] == "awaiting_approval"
     (payload,) = _actions(api, "orchestrator_fallback")
-    assert '"model_id": "stub"' in payload and "unreachable" in payload
+    assert payload["model_id"] == "stub" and "unreachable" in payload["reason"]
     models = api.session.execute(text("SELECT model_id FROM agent_run")).scalars().all()
     assert models == ["stub"]
     assert api.call("GET", "/api/metrics").json()["reliability"]["fallback_runs"] == 1
@@ -278,7 +276,7 @@ def test_a_rejected_handoff_in_the_worker_keeps_its_audit_row(api, monkeypatch):
     assert _segment(api, job["id"])[0] == "failed"
     assert len(_actions(api, "handoff_rejected")) == 1
     (failed,) = _actions(api, "segment_failed")
-    assert '"permanent": true' in failed
+    assert failed["permanent"] is True
     assert api.call("GET", f"/api/jobs/{job['id']}").json()["status"] == "failed"
 
 

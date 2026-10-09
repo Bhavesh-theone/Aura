@@ -32,7 +32,7 @@ def test_dealmaker_and_compliance_set_flags(api, user):
         "SEBI takeover code", "RBI FEMA"]
     audit = api.session.execute(text("SELECT actor, payload FROM audit_entries WHERE action "
                                      "= 'deal_flags_updated'")).one()
-    assert audit[0] == user and '"RBI FEMA"' in audit[1]
+    assert audit[0] == user and audit[1]["to"] == ["SEBI takeover code", "RBI FEMA"]
     assert api.call("PATCH", f"/api/deals/{deal}", user=user,
                     json={"regulatory_flags": []}).json()["regulatory_flags"] == []
 

@@ -50,7 +50,7 @@ def test_database_checks_agree_with_the_enums(api):
          "('institution', 'x', '2026-01-01')", {}),
         ("INSERT INTO document (deal_id, doc_class, filename, sha256, byte_size, current_version, "
          "contains_upsi, sensitivity, uploaded_by, uploaded_at, class_confirmed) VALUES "
-         "(:d, 'teaser', 'f', 'x', 1, 1, 0, 2, 'u', '2026-01-01', 0)", {"d": deal})]:
+         "(:d, 'teaser', 'f', 'x', 1, 1, false, 2, 'u', '2026-01-01', false)", {"d": deal})]:
         with pytest.raises(Exception, match="ck_"):
             api.session.execute(text(sql), params)
         api.session.rollback()

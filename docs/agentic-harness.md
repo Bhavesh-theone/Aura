@@ -199,10 +199,10 @@ This follows the 12-factor principle: the model proposes, and deterministic code
 | 5 | Tools & actions | ✅ Strong | Gated MCP wrappers; the standalone MCP server gates itself; `add_internal_note` persists; tool output screened. Gmail draft/send tools exist on a separate approval-checking MCP server the crew never sees. **Gap:** only four crew tools, and `send_email` is deliberately never executable |
 | 6 | Policy & guardrails | ✅ Strong | Deterministic gate, materiality, confidence, autonomy level, policy-chosen recommendation, schema validation |
 | 7 | Human-in-the-loop | ✅ Strong | Structured handoffs, directives, `do_not_revisit`, escalation, atomic resolve (409 for the loser) |
-| 8 | State & memory | 🟡 Partial | Atomic claim, lease recovery, stale-result discard, durable job, segment, task and handoff records. **Gaps:** single-machine SQLite, so no multi-host workers and the audit write lock is per process; no long-term agent memory (by design) |
+| 8 | State & memory | 🟡 Partial | Atomic claim, lease recovery, stale-result discard, durable job, segment, task and handoff records, on PostgreSQL (segment claim with `FOR UPDATE SKIP LOCKED`, audit appends under a cross-process advisory lock). **Gaps:** one local database and one worker, not yet run with multi-host workers; no long-term agent memory (by design) |
 | 9 | Observability & lineage | ✅ Strong | Run records written before use, hash-chained audit, `gen_ai.*` spans linked to `agent_run` and audit rows, trace viewer, reliability metrics, `agent_run.task_id` linked. **Gaps:** the tracer is local only (no OTLP export); `cost_inr` is 0 |
 | 10 | Evaluation & feedback | 🟡 Partial | Golden sets, scoring, override rate, automatic demotion, admin promotion, partial runs excluded. **Gaps:** golden sets are small (24/12/6) and fictional; the stub scores are a keyword baseline, not model quality; evals run without retrieval, and no golden case drives the injection path end to end; real-model runs are manual |
-| 11 | Security & isolation | ✅ Strong | Walls bind agent tools and run-time context; local-only; injection screening of documents, retrieved chunks and tool output with a forced human decision. **Gaps:** screening is rule-based (a paraphrased attack can pass); the worker still holds SYSTEM-scoped repositories |
+| 11 | Security & isolation | ✅ Strong | Walls bind agent tools and run-time context, and are enforced again by PostgreSQL row-level security on every deal-scoped table (the app role cannot bypass it; it catches app bugs, not compromised app code); local-only; injection screening of documents, retrieved chunks and tool output with a forced human decision. **Gaps:** screening is rule-based (a paraphrased attack can pass); the worker still holds SYSTEM-scoped repositories |
 | 12 | Error handling & recovery | ✅ Strong | Transient/permanent split, backoff, dead letters, manual retry, crash recovery, stale-result discard, idempotent submit, LLM call retries |
 | 13 | Delivery / Egress | ✅ Strong | Wall-filtered WebSocket, audited events, outbound email only after human approval plus pre-send checks (off by default). **Gap:** events with no `deal_id` go to every connected socket (`api/ws/hub.py:49-50`) |
 
@@ -216,7 +216,7 @@ This follows the 12-factor principle: the model proposes, and deterministic code
 
 | Fix | Where in code | Category |
 |---|---|---|
-| Atomic segment claim (conditional `UPDATE ... RETURNING`) | `data/repositories/sql.py:109-144` | 8, 12 |
+| Atomic segment claim (`SELECT ... FOR UPDATE SKIP LOCKED`, then the claim update) | `data/repositories/sql.py:105-144` | 8, 12 |
 | Lease, startup and pre-claim recovery of stale RUNNING segments | `segment_reliability.py:94-119`, `worker/runner.py:194-208` | 8, 12 |
 | Stale-result discard (`hold_claim`, `stale_result_discarded`) | `run_segment.py:88-107`, `sql.py:159-176` | 8, 12 |
 | Transient/permanent retry policy, backoff, dead letters, manual retry | `core/policy/retry_policy.py`, `segment_reliability.py:41-187`, `api/routers/jobs.py` | 12 |
@@ -240,7 +240,7 @@ This follows the 12-factor principle: the model proposes, and deterministic code
 | Resume marker renamed to `resume_after_approval` (legacy name still read) | `orchestrator.py:103-105, 168` | 3 |
 | Dropped tool attempts kept as `additional_gated_attempts` evidence | `orchestrator.py:108-113`, `handoff_policy.py:176-178` | 5, 7 |
 | Thinking off by default for the local model (`AURA_OLLAMA_THINK`), after empty answers failed jobs | `config.py:22`, `orchestrator.py:153-157` | 4 |
-| SQLite 30 s busy timeout for concurrent API, worker and eval writers | `data/engine.py:16-18` | 8, 12 |
+| PostgreSQL 16 + pgvector: `SKIP LOCKED` segment claim, audit appends under `pg_advisory_xact_lock` across API, worker and eval processes, row-level security on deal-scoped tables (replaces the SQLite 30 s busy timeout) | `data/engine.py`, `data/walls.py`, `sql.py:105-109, 322-325`, `migrations/versions/0001_postgres_baseline.py` | 8, 11, 12 |
 | CORS exposes `Retry-After` and `Idempotent-Replayed` for the portal | `api/main.py:28` | 13, 1 |
 
 ### Remaining
@@ -248,7 +248,7 @@ This follows the 12-factor principle: the model proposes, and deterministic code
 | Priority | Item | Category |
 |---|---|---|
 | 1 | Move rate limits and the model-call semaphore to a shared store before running more than one API or worker process | 1, 4 |
-| 2 | Leave single-machine SQLite (for example Postgres with row locks) for multi-host workers; the audit chain lock (`sql.py:32`) is also per process | 8, 12 |
+| 2 | Run and test more than one worker process against the shared PostgreSQL database (claims and the audit lock already work across processes) | 8, 12 |
 | 3 | Grow the golden sets, add retrieval and injection cases, and run the real-model spot check on a schedule or in CI | 10 |
 | 3b | Treat one empty model answer as transient and retry it once (today it is a permanent `ValueError`); lift the real-model extract score (0.42 against 0.70) | 10, 12 |
 | 4 | Use `pinned_model` to choose the model; add a second model as a real failover | 4 |

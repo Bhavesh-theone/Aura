@@ -211,7 +211,7 @@ def test_create_and_resolve_are_audited(api):
     rows = api.session.execute(text("SELECT action, actor, payload FROM audit_entries "
                                     "WHERE action LIKE 'handoff_%' ORDER BY id")).all()
     assert [r[0] for r in rows] == ["handoff_created", "handoff_resolved"]
-    assert rows[1][1] == "bhavesh" and '"decision": "approve"' in rows[1][2]
+    assert rows[1][1] == "bhavesh" and rows[1][2]["decision"] == "approve"
 
 
 def test_materiality_above_the_cap_gates_and_is_flagged(api):

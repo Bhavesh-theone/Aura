@@ -103,7 +103,7 @@ def test_guarded_percentage_drops_when_a_forward_move_has_no_guard_rows(api):
     # a history row with no evaluations behind it (e.g. written outside the service)
     api.session.execute(text(
         "INSERT INTO deal_stage_history (deal_id, from_stage, to_stage, entered_at, actor, "
-        "is_regression) VALUES (:d, 'QUALIFIED', 'MANDATED', '2026-10-06 12:00:00', 'x', 0)"),
+        "is_regression) VALUES (:d, 'QUALIFIED', 'MANDATED', '2026-10-06 12:00:00', 'x', false)"),
         {"d": d})
     api.session.commit()
     assert api.call("GET", "/api/metrics").json()["success"][

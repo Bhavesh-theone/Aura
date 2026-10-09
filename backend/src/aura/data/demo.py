@@ -1,6 +1,6 @@
 """Demo dataset: a realistic, fictional Indian mid-market deal desk.
 
-    uv run python -m aura.data.demo [--with-agents] [--db PATH]
+    uv run python -m aura.data.demo [--with-agents] [--db DATABASE]
 
 Opt-in and idempotent. Every record is created through the real core services, acting as
 the user who would do it (dealmakers move deals, analysts upload and work diligence,
@@ -21,7 +21,6 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 HORIZON_DAYS = 126  # business days, about six calendar months
 
@@ -765,19 +764,41 @@ def build(desk, days, run_now: datetime):
     return stories
 
 
+def _use_database(name: str) -> None:
+    """Point AURA_DATABASE_URL / AURA_MIGRATION_DATABASE_URL at database `name` on the same
+    server, creating it (as the schema owner) when it does not exist yet."""
+    from sqlalchemy import create_engine, make_url, text
+
+    from aura.config import get_settings
+    s = get_settings()
+    if not s.migration_database_url:
+        raise SystemExit("--db needs AURA_MIGRATION_DATABASE_URL (the aura_owner connection)")
+    owner = make_url(s.migration_database_url)
+    admin = create_engine(owner.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        if not conn.scalar(text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": name}):
+            conn.execute(text(f'CREATE DATABASE "{name}"'))
+    admin.dispose()
+    os.environ["AURA_DATABASE_URL"] = make_url(s.database_url).set(
+        database=name).render_as_string(hide_password=False)
+    os.environ["AURA_MIGRATION_DATABASE_URL"] = owner.set(
+        database=name).render_as_string(hide_password=False)
+    get_settings.cache_clear()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m aura.data.demo", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--with-agents", action="store_true",
                     help="run two agent jobs on the live CrewAI + Ollama crew (slow)")
-    ap.add_argument("--db", help="SQLite file to build into (default: backend/aura.db)")
+    ap.add_argument("--db", help="PostgreSQL database to build into, on the same server "
+                    "(default: the one AURA_DATABASE_URL names). Created if missing.")
     args = ap.parse_args(argv)
     if args.db:
-        url = f"sqlite:///{Path(args.db).resolve().as_posix()}"
-        if "aura.data.engine" in sys.modules and                 str(sys.modules["aura.data.engine"].engine.url) != url:
+        if "aura.data.engine" in sys.modules:
             ap.error("--db must be given before the database engine is created; run it as "
                      "its own command")
-        os.environ["AURA_DATABASE_URL"] = url
+        _use_database(args.db)
 
     # Imported here so --db takes effect before the engine is created.
     from aura.core.clock import use_clock

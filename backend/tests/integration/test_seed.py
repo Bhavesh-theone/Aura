@@ -2,23 +2,20 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
-from aura.config import get_settings
 from aura.data import seed as seed_module
-from aura.data.engine import make_engine
+from aura.data.engine import VIEWER_KEY
 from aura.data.verify_audit import verify_chain
+from aura.data.walls import SYSTEM_VIEWER
+from tests.integration.pgtest import fresh_engine
 
 
 @pytest.fixture()
-def scratch(tmp_path, monkeypatch):
-    url = f"sqlite:///{(tmp_path / 'seed.db').as_posix()}"
-    monkeypatch.setenv("AURA_DATABASE_URL", url)
-    get_settings.cache_clear()
-    engine = make_engine(url)
-    factory = sessionmaker(bind=engine, expire_on_commit=False)
-    monkeypatch.setattr(seed_module, "engine", engine)
-    monkeypatch.setattr(seed_module, "SessionLocal", factory)
-    yield factory
-    get_settings.cache_clear()
+def scratch():
+    """An empty test database; seed() migrates and fills it like the API does at start-up.
+    The returned sessions read as SYSTEM (raw SQL across every wall)."""
+    engine = fresh_engine()
+    return sessionmaker(bind=engine, expire_on_commit=False,
+                        info={VIEWER_KEY: SYSTEM_VIEWER})
 
 
 def test_seed_is_idempotent_and_leaves_a_verifiable_chain(scratch):

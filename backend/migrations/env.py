@@ -1,33 +1,38 @@
+"""Alembic environment: PostgreSQL only, run as the schema owner (aura_owner).
+
+The URL is, in order: config.set_main_option("sqlalchemy.url", ...) (tests, tools), then
+AURA_MIGRATION_DATABASE_URL. The app's own URL (aura_app) cannot run DDL by design.
+The SQLite-era chain lives in migrations/sqlite_legacy/ for reference and is never run.
+"""
 from alembic import context
 from sqlalchemy import create_engine
 
+import aura.data.models.tables  # noqa: F401  (registers every table on Base.metadata)
 from aura.config import get_settings
 from aura.data.engine import Base
-import aura.data.models.tables  # noqa: F401  (registers every table on Base.metadata)
 
 config = context.config
 target_metadata = Base.metadata
 
 
 def _url() -> str:
-    # Tests and tools can override via config.set_main_option("sqlalchemy.url", ...).
-    return config.get_main_option("sqlalchemy.url") or get_settings().database_url
+    url = config.get_main_option("sqlalchemy.url") or get_settings().migration_database_url
+    if not url:
+        raise SystemExit("Set AURA_MIGRATION_DATABASE_URL (the aura_owner connection) to run "
+                         "migrations")
+    return url
 
 
 def run_migrations_offline() -> None:
-    context.configure(url=_url(), target_metadata=target_metadata, literal_binds=True,
-                      render_as_batch=True)
+    context.configure(url=_url(), target_metadata=target_metadata, literal_binds=True)
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    # Plain engine: foreign_keys stays OFF so SQLite batch table rebuilds can drop and
-    # recreate parent tables.
-    engine = create_engine(_url())
+    engine = create_engine(_url(), connect_args={"options": "-c timezone=UTC"})
     with engine.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata,
-                          render_as_batch=True)
+        context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
     engine.dispose()

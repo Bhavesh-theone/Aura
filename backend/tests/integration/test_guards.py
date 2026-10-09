@@ -271,7 +271,8 @@ def test_scripted_deal_reaches_closed_with_guard_rows_for_every_move(api):
 
     # one history row per move, each linked to the evaluations that let it through
     rows = api.session.execute(text(
-        "SELECT h.to_stage, COUNT(e.id), SUM(e.result) FROM deal_stage_history h "
+        "SELECT h.to_stage, COUNT(e.id), SUM(CASE WHEN e.result THEN 1 ELSE 0 END) "
+        "FROM deal_stage_history h "
         "LEFT JOIN stage_guard_evaluation e ON e.history_id = h.id WHERE h.deal_id = :d "
         "AND h.from_stage IS NOT NULL GROUP BY h.id ORDER BY h.id"), {"d": d}).all()
     assert [r[0] for r in rows] == FORWARD[1:]

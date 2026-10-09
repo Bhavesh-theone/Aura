@@ -19,7 +19,7 @@ def _extract(api, deal, doc, user="bhavesh"):
 
 def _insert(api, **kw):
     cols = dict(document_id=1, version=1, schema_name="financials.v1", payload="{}",
-                confidence=0.5, feeds_valuation=0, human_verified_by=None,
+                confidence=0.5, feeds_valuation=False, human_verified_by=None,
                 human_verified_at=None, model_run_id=None, created_at="2026-10-06")
     cols.update(kw)
     api.session.execute(text(
@@ -33,12 +33,12 @@ def test_the_database_refuses_an_unverified_low_confidence_extraction_that_feeds
     deal = make_deal(api)
     upload(api, deal)
     with pytest.raises(Exception, match="ck_extraction_valuation_gate"):
-        _insert(api, confidence=0.94, feeds_valuation=1)
+        _insert(api, confidence=0.94, feeds_valuation=True)
     api.session.rollback()
 
-    _insert(api, confidence=0.94, feeds_valuation=0)  # recorded, not feeding: fine
-    _insert(api, confidence=0.95, feeds_valuation=1)  # confident enough on its own
-    _insert(api, confidence=0.40, feeds_valuation=1, human_verified_by="bhavesh",
+    _insert(api, confidence=0.94, feeds_valuation=False)  # recorded, not feeding: fine
+    _insert(api, confidence=0.95, feeds_valuation=True)  # confident enough on its own
+    _insert(api, confidence=0.40, feeds_valuation=True, human_verified_by="bhavesh",
             human_verified_at="2026-10-06")  # a person vouched
     api.session.commit()
     assert api.session.execute(text("SELECT COUNT(*) FROM extraction")).scalar() == 3

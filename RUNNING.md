@@ -14,6 +14,9 @@ Everything runs on your machine. No cloud services, no API keys, no internet req
 | uv     | 0.12+   | `uv --version`     | `powershell -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
 | Node   | 18+     | `node --version`   | nodejs.org                                                     |
 | Ollama | any     | `ollama --version` | Installed                                                      |
+| Podman | any     | `podman --version` | podman.io (Windows: `C:\Users\<you>\AppData\Local\Programs\Podman\podman.exe`) |
+
+The database runs in a Podman container, so the Podman machine must be running: `podman machine start` (once per boot; `podman machine list` shows it).
 
 Confirm the model is present:
 
@@ -40,21 +43,70 @@ cd backend
 uv sync
 ```
 
-That creates `.venv/` and installs everything from `uv.lock`. The `.env` file is already present with local-only defaults — no editing needed to get started.
+That creates `.venv/` and installs everything from `uv.lock`. The `.env` file is already present with local-only defaults — no editing needed to get started. If you start from `.env.example`, copy it to `backend/.env`: it lists the database passwords and URLs with their development defaults.
+
+### Database (PostgreSQL 16 + pgvector)
+
+Aura uses one PostgreSQL 16 database with the `pgvector` extension, in a Podman container (image `docker.io/pgvector/pgvector:pg16`, container `aura-postgres`, volume `aura-pg-data`) on host port **5433**, bound to 127.0.0.1. `scripts/db.ps1` manages it with Podman directly; it finds `podman` on PATH or in `C:\Users\<you>\AppData\Local\Programs\Podman\`. Run it from the repo root:
+
+```powershell
+podman machine start                 # if the Podman machine is not running yet
+./scripts/db.ps1 up                  # create or start the container, create roles and extensions
+./scripts/db.ps1 status              # container state and readiness
+./scripts/db.ps1 psql                # psql as the superuser on the aura database
+./scripts/db.ps1 psql -Role aura_app -Database aura_test
+./scripts/db.ps1 down                # stop it; the data stays in the aura-pg-data volume
+./scripts/db.ps1 reset               # DELETE the volume and start from an empty database
+```
+
+The alternative is compose: `podman compose --env-file backend/.env -f infra/postgres/compose.yaml up -d`. Both run the init script `infra/postgres/init/10-aura-roles.sh` (idempotent; `db.ps1 up` re-runs it every time), which creates the roles and the extensions `vector` and `pg_trgm` in `aura` and in `template1` (so the test database gets them too).
+
+**Roles.** The superuser `postgres` is used only for this bootstrap.
+
+| Role | Used by | Can |
+| --- | --- | --- |
+| `aura_owner` | Alembic, the SQLite import, the test-database setup | Owns the schema; `CREATEDB` (for the test database); `BYPASSRLS`, so the `SECURITY DEFINER` wall-check functions it owns can read the wall tables. Never used by the running app |
+| `aura_app` | The API and the worker | DML grants only. Not superuser, not `BYPASSRLS`, owns nothing; no `UPDATE`/`DELETE` on the append-only tables; cannot write `alembic_version` |
+
+**Connection settings** (`backend/.env`, gitignored; the values are local development defaults only):
+
+```bash
+AURA_PG_SUPERUSER_PASSWORD=aura_super_dev
+AURA_PG_OWNER_PASSWORD=aura_owner_dev
+AURA_PG_APP_PASSWORD=aura_app_dev
+AURA_DATABASE_URL=postgresql+psycopg://aura_app:aura_app_dev@127.0.0.1:5433/aura          # also the code default
+AURA_MIGRATION_DATABASE_URL=postgresql+psycopg://aura_owner:aura_owner_dev@127.0.0.1:5433/aura
+```
+
+Use `127.0.0.1`, not `localhost`, in these URLs: on Windows with Podman, `localhost` tries IPv6 `::1` first and stalls about 8 s on every new connection. The driver is psycopg 3 (synchronous) behind a SQLAlchemy 2 `QueuePool`.
 
 ### Database migrations (Alembic)
 
-The schema is versioned in `backend/migrations/versions/` (`0001` baseline through `0013_outbound_email`). **You normally do nothing:** the API runs `alembic upgrade head` on every start, so an existing `backend/aura.db` is upgraded in place (its approvals become handoffs, existing deals get a wall with their owner on it, `member` users become analysts, the admin user `bhavesh` becomes a dealmaker, documents get version rows, checklist items are grouped under templates). `0009` refuses to run, changing nothing, if a stored identifier is malformed: fix the named rows first. To drive it by hand:
+The schema is one Alembic baseline, `backend/migrations/versions/0001_postgres_baseline.py`: BIGINT identity keys, JSONB for every JSON column, TIMESTAMPTZ, `NUMERIC(20,2)` for rupee amounts (`finding.quantified_impact_inr`, `task.materiality_inr`, `agent_run.cost_inr`), CHECK constraints (identifier formats as POSIX regexes), PL/pgSQL triggers that refuse `UPDATE` and `DELETE` on `audit_entries`, `deal_stage_history` and `doc_access_log`, the row-level security policies and the grants. The old SQLite chain `0001`–`0013` is kept in `backend/migrations/sqlite_legacy/` for reference only; it is never run.
+
+Alembic runs as `aura_owner` through `AURA_MIGRATION_DATABASE_URL`. **You normally do nothing:** when that URL is set the API runs `alembic upgrade head` on start; when it is not set the API only checks that the schema is at head and refuses to start if it is not. To drive it by hand:
 
 ```bash
 cd backend
 uv run alembic current              # which revision the database is at
 uv run alembic upgrade head         # apply everything pending
-uv run alembic downgrade -1         # step back one revision (every step has a downgrade)
+uv run alembic downgrade base       # drop the whole schema
 uv run alembic check                # fails if the models and the migrations have drifted
 ```
 
-Point any of these at a scratch database with `AURA_DATABASE_URL=sqlite:///C:/path/scratch.db`. Never delete `aura.db` to change the schema: add a migration.
+Never drop the database to change the schema: add a migration.
+
+### Importing an existing SQLite database (once)
+
+If you ran Aura before the move to PostgreSQL, your data is in `backend/aura.db`. With the database up, copy it across before the first API start (the API seeds users and reference data on start, after which the target is no longer empty):
+
+```bash
+cd backend
+uv run python -m aura.data.migrate_sqlite --from aura.db     # from the repo root: --from backend/aura.db
+uv run python -m aura.data.verify_audit                       # prints OK
+```
+
+The import first brings the target to the Alembic head (it writes as `aura_owner`, `AURA_MIGRATION_DATABASE_URL` by default). It copies every row and keeps every primary key, then resets the identity sequences. It copies `audit_entries` value for value and re-verifies the hash chain on PostgreSQL, rolling back if any row would not hash identically (the canonical hash normalises `created_at` to naive UTC and sorts JSON keys, so the chain verifies unchanged). It copies the audit anchor when the target database's anchor path differs, and re-writes the stage-guard SQL for the PostgreSQL dialect. It refuses a target that already holds data unless you pass `--force`, which empties it first. `--to <owner URL>` imports into another database, for example a scratch copy. `aura.db` is opened read-only and stays as the backup.
 
 ### Frontend
 
@@ -66,6 +118,8 @@ npm install
 ---
 
 ## 3. Running it (three terminals)
+
+The database container must be up first (`./scripts/db.ps1 status`; `./scripts/db.ps1 up` if not). It keeps running in the background.
 
 ### Terminal 1 — Ollama
 
@@ -89,7 +143,7 @@ Watch the startup log for the orchestrator line:
 
 The choice is made **per segment**, not once at startup: the worker re-checks Ollama at most every 30 s (`AURA_ORCHESTRATOR_HEALTH_TTL_SECONDS`). Start or stop Ollama while the backend runs and the next segment follows. Each segment that runs on the stub because Ollama is down is audited as `orchestrator_fallback`.
 
-**Thinking is off for the crew's model** (`AURA_OLLAMA_THINK=false`, the default). qwen3.5's reasoning mode on the 4B model often used the whole output budget and returned an empty answer ("Invalid response from LLM call - None or empty", a permanent failure) and was 5-10x slower. Set `AURA_OLLAMA_THINK=true` only to experiment. SQLite waits up to 30 s for another process's write lock, so an eval run can share the database with the API worker; a real-model eval on a copy of the database is still the safest way to avoid touching autonomy.
+**Thinking is off for the crew's model** (`AURA_OLLAMA_THINK=false`, the default). qwen3.5's reasoning mode on the 4B model often used the whole output budget and returned an empty answer ("Invalid response from LLM call - None or empty", a permanent failure) and was 5-10x slower. Set `AURA_OLLAMA_THINK=true` only to experiment. An eval run can share the database with the API and worker (PostgreSQL handles the concurrent writers; audit appends from every process are serialised by a transaction-scoped advisory lock); a real-model eval on a copy of the database is still the safest way to avoid touching autonomy.
 
 Verify: [http://localhost:8000/api/health](http://localhost:8000/api/health) returns `{"status":"ok"}`
 API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
@@ -144,8 +198,8 @@ To make the portal look like a working deal desk, build the demo dataset once:
 
 ```bash
 cd backend
-uv run python -m aura.data.demo                 # into backend/aura.db
-uv run python -m aura.data.demo --db C:/tmp/scratch.db   # or into another SQLite file
+uv run python -m aura.data.demo                 # into the configured database (aura)
+uv run python -m aura.data.demo --db aura_scratch   # or into another database on the same server (created if missing)
 uv run python -m aura.data.demo --with-agents   # two of the jobs run on the live CrewAI + Ollama crew (slow)
 ```
 
@@ -253,7 +307,7 @@ Restart the backend after changing it. **Settings › Integrations** in the port
 
 ### Retries, dead letters and recovery
 
-The worker claims a segment with one atomic `UPDATE ... WHERE status = 'queued'`, so two workers can never run the same segment. Each claim stamps `claimed_by`, `claimed_at` and counts an attempt.
+The worker claims a segment with `SELECT ... FOR UPDATE SKIP LOCKED` on the oldest runnable queued segment, so two workers can never run the same segment and neither waits for the other. Each claim stamps `claimed_by`, `claimed_at` and counts an attempt.
 
 - **Transient failure** (Ollama refused the connection, a timeout, a 5xx from the model): the segment goes back to `queued` with `not_before` set by exponential backoff (10 s, 20 s, 40 s ...), audited `segment_retry_scheduled`. After `AURA_SEGMENT_MAX_ATTEMPTS` (3) attempts it becomes **`dead_letter`**: the job is `failed`, `last_error` says why, `segment_dead_lettered` is audited and sent over the WebSocket.
 - **Permanent failure** (bad model output that fails validation, a run that could not be recorded, a policy refusal, a used-up budget): the segment fails at once with `last_error`, audited `segment_failed` (`"permanent": true`). A refused handoff package keeps its `handoff_rejected` audit row before the segment fails.
@@ -283,7 +337,7 @@ curl -s -X POST localhost:8000/api/jobs/42/retry -H "Authorization: Bearer $TOKE
 | `AURA_ORCHESTRATOR_HEALTH_TTL_SECONDS` | 30 | How long an Ollama health check is trusted |
 | `AURA_OLLAMA_THINK` | false | Let the model reason before answering; off sends `reasoning_effort: none` |
 
-Schema for all of this is migration `0011_harness_reliability` (applied by `alembic upgrade head` on the next backend start; its downgrade turns `dead_letter` segments into `failed`).
+The schema for all of this is part of the baseline migration `0001` (it was added in the SQLite-era migration `0011_harness_reliability`).
 
 ### Evaluation, autonomy and safety
 
@@ -351,7 +405,7 @@ The stub is a keyword baseline (filename and text phrases, `label: number` with 
 | `AURA_MAX_CONCURRENT_LLM_CALLS` | 1 | Model calls running at once |
 | `AURA_TRACING_ENABLED` | true | Record spans in `trace_span` |
 
-Schema: migration `0012_harness_eval_obs` (tables `eval_run`, `eval_case_result`, `capability_autonomy` seeded at level 2, `trace_span`, `deal_note`; `trace_id`/`span_id` on `jobs` and `agent_run`; handoff trigger `untrusted_content`). Its downgrade turns `untrusted_content` handoffs into `policy_required`.
+Schema: part of the baseline `0001` (added in the SQLite-era `0012_harness_eval_obs`): tables `eval_run`, `eval_case_result`, `capability_autonomy`, `trace_span`, `deal_note`; `trace_id`/`span_id` on `jobs` and `agent_run`; handoff trigger `untrusted_content`.
 
 ### Seeing it in the app and the API
 
@@ -394,13 +448,19 @@ Schema: migration `0012_harness_eval_obs` (tables `eval_run`, `eval_case_result`
 | `GET/PATCH /api/documents/{id}`, `GET /api/documents/{id}/versions`, `GET .../download` | Metadata (logs a `view`), set `{is_executed?, doc_class?}` (setting a class confirms it), version list, download (logs a `download`). Listing a deal's documents is not logged. Uploading the same filename to a deal adds a version (`current_version`) instead of a new document |
 | `GET /api/deals/{id}/extractions`, `POST /api/extractions/{id}/verify` | See above |
 | `GET/POST /api/deals/{id}/findings` | `{diligence_item_id, finding_type, description, quantified_impact_inr?, affects_valuation}`; a finding that affects valuation needs an impact |
-| `PATCH /api/deals/{id}` | `{regulatory_flags}` (dealmaker or compliance). A flagged deal cannot leave DILIGENCE until compliance has signed it off |
+| `PATCH /api/deals/{id}` | `{regulatory_flags?, profile?, profile_schema_version?}`. Regulatory flags: dealmaker or compliance; a flagged deal cannot leave DILIGENCE until compliance has signed it off. Profile: dealmaker or analyst, the whole profile replaced, validated against the class's schema (422 when invalid), audited `deal_profile_updated` |
+| `POST /api/deals`, `GET /api/deals/{id}` | Deal payloads carry `profile` (class-specific deal terms, JSON) and `profile_schema_version`; `POST` accepts an optional `profile`, validated the same way |
+| `GET /api/deal-profiles/schemas`, `GET /api/deal-profiles/schemas/{class}` | Any signed-in role. The JSON Schema (draft 2020-12) of each transaction class, for rendering the deal-terms form; 404 for an unknown class |
 | `GET/POST /api/deals/{id}/signoffs` | POST `{note}` is compliance only (201) |
 | `GET /api/audit/verify` | `{ok, broken_at, anchor: {head_id, head_hash, written_at, ok}}` |
 
 Stage guards: every forward move has guards (T1 party with an identifier, T2 executed engagement letter, T3 a hard mandate criterion, T4 financial statement, T5 counterparty and executed NDA, T6 two counterparties, T7 valuation report, T8 executed term sheet, T9 checklist exists with no open blocker and compliance sign-off where the deal is flagged, T10 executed SPA/SHPA, T11 a condition exists and all are cleared). Each says in plain English what it wants, and the evaluation objects carry `override_role`. A move is made by a dealmaker, **or** by compliance when it supplies `override_justification` and every failing blocking guard names `compliance` (T9, T11); compliance cannot make an ordinary move (403), and a dealmaker cannot override a compliance guard (409). Each successful move links its evaluations to its `deal_stage_history` row.
 
-Mandates follow SOSPE §6.2: `POST /api/deals/{id}/mandates` takes `{title, notes, side: sell|buy|raise|deploy|partner, status?: draft|active|paused|fulfilled|expired|withdrawn (default active), criteria: [{criterion_key, operator: eq|in|gte|lte|between|not_in|contains, value (JSON: a list for in/not_in/between, a number for gte/lte), hardness: hard|soft|preference, weight (0-1, required when soft)}]}`. T3 needs one `hardness = 'hard'` criterion. Migration `0010` converts older mandates (kind→hardness, attribute→criterion_key, operator `eq`, value kept as a JSON string, side from the deal's class, status `active`).
+Mandates follow SOSPE §6.2: `POST /api/deals/{id}/mandates` takes `{title, notes, side: sell|buy|raise|deploy|partner, status?: draft|active|paused|fulfilled|expired|withdrawn (default active), criteria: [{criterion_key, operator: eq|in|gte|lte|between|not_in|contains, value (JSON: a list for in/not_in/between, a number for gte/lte), hardness: hard|soft|preference, weight (0-1, required when soft)}]}`. T3 needs one `hardness = 'hard'` criterion. (Older mandates were converted to this shape by the SQLite-era migration `0010`; the SQLite import copies them as they are.)
+
+**Deal profiles.** Each deal has a `profile` (JSONB, empty by default) with the deal terms that differ by transaction class, checked against a JSON Schema in `backend/src/aura/core/schemas/deal_profile/<CLASS>.v1.json` on create and update. For example DEBT carries `facility_type`, `tenor_months`, `security_package`, `covenants`, `rating`; EQUITY `round_type`, `pre_money_inr`, `instrument`, `cap_table_summary`; MNA `structure`, `stake_pct`, `cci_route`; JV `partner_country`, `fema_route`, `press_note_3`; LPGP `fund_category`, `commitment_inr`, `sebi_aif_category`; HYBRID `instrument`, `conversion_terms`; ALLIANCE `alliance_type`, `exclusivity`, `territory`. The schema files are authoritative. Seeded and demo deals get plausible profiles; re-seeding fills the empty profile of a known demo deal (audited).
+
+**Schema for later phases.** Two tables exist with no code using them yet: `doc_chunk` (document chunks with a generated `tsvector` and a `vector(768)` embedding behind an HNSW index, for hybrid retrieval with Ollama `nomic-embed-text` later; row-level security like documents) and `deal_intake` (draft deals private to their creator until confirmed; no API yet).
 
 `/api/approvals` no longer exists. Stage-guard evaluations (preview, transition 200 and 409) now include a plain-English `description`.
 
@@ -440,16 +500,20 @@ curl -s localhost:8000/api/jobs/1 -H "Authorization: Bearer $TOKEN"
 
 ```bash
 cd backend
-uv run pytest tests -v              # everything
+uv run pytest tests -v              # everything (needs the database container up)
 uv run pytest tests/unit -v         # fast — no DB, no network, no model
 uv run lint-imports --config .importlinter
 uv run alembic check                # models and migrations agree
 uv run python -m aura.data.verify_audit   # recompute the audit hash chain and compare it with the anchor: prints OK, or what is wrong, and exits 1
 ```
 
-`verify_audit` reads the database named by `AURA_DATABASE_URL` (default `backend/aura.db`). The same check is available at `GET /api/audit/verify`.
+The integration tests use a separate database, `aura_test` (override the name with `AURA_TEST_DATABASE`), on the same server. It is dropped, created and migrated once per run as `aura_owner`; the code under test connects as `aura_app`, and every test starts from emptied tables (`TRUNCATE ... RESTART IDENTITY`). Unit tests need no database.
 
-**The audit anchor** (`backend/data/audit_anchor.json`: `head_id`, `head_hash`, `written_at`) is what catches someone deleting the newest audit rows, which a chain cannot show on its own. The API checks the chain against it at start-up, then moves it up to the current head; the worker moves it up about every minute and `verify_audit` does too after a clean check. Verification fails if the chain's head is behind the anchored head, if the anchored row no longer matches, or if any hash breaks. A database other than the default keeps its anchor beside its own file (`<db>.audit_anchor.json`), so a scratch copy never compares against the real one; `AURA_AUDIT_ANCHOR_PATH` overrides the location. Writing the anchor to WORM storage is deferred.
+`verify_audit` reads the database named by `AURA_DATABASE_URL` (default the `aura` database on `127.0.0.1:5433`). The same check is available at `GET /api/audit/verify`.
+
+**The audit anchor** (`backend/data/audit_anchor.json`: `head_id`, `head_hash`, `written_at`) is what catches someone deleting the newest audit rows, which a chain cannot show on its own. The API checks the chain against it at start-up, then moves it up to the current head; the worker moves it up about every minute and `verify_audit` does too after a clean check. Verification fails if the chain's head is behind the anchored head, if the anchored row no longer matches, or if any hash breaks. The file `audit_anchor.json` belongs to the database named `aura`; any other database keeps its own, `backend/data/audit_anchor.<database>.json`, so a scratch or test database never compares against the real one. `AURA_AUDIT_ANCHOR_PATH` overrides the location. Writing the anchor to WORM storage is deferred.
+
+Audit rows are appended under a transaction-scoped advisory lock (`pg_advisory_xact_lock`), so the API, the worker and an eval run in separate processes cannot fork the chain. The chain head is read through the `SECURITY DEFINER` function `aura_audit_head()`, so a user who cannot see the newest row's deal still links to it.
 
 The `lint-imports` command is the important one. It enforces the architectural rule that `core/` imports nothing from `data/`, `api/`, `worker/`, `mcp/`, or `agents/` — and no FastAPI, SQLAlchemy or pydantic. If it reports **BROKEN**, a layering violation has crept in; fix the import rather than editing the contract.
 
@@ -476,6 +540,10 @@ npm run build      # must pass with no type errors
 | A deal or document returns 404            | You are not on the deal's wall         | A compliance user on the wall adds you (`POST /api/deals/{id}/members`) |
 | Any write returns 403                     | Your role may not do that              | See the roles table in section 3; `admin` has no deal powers |
 | `lint-imports` BROKEN                   | Layering violation                     | Remove the offending import; don't relax the contract |
+| Backend fails at start with a connection error on port 5433 | Database container not running | `podman machine start`, then `./scripts/db.ps1 up`; `./scripts/db.ps1 status` to check |
+| Every request or test is ~8 s slow to connect | URL uses `localhost` (IPv6 `::1` tried first) | Use `127.0.0.1` in `AURA_DATABASE_URL` and `AURA_MIGRATION_DATABASE_URL` |
+| Backend refuses to start: schema not at head | `AURA_MIGRATION_DATABASE_URL` unset, so the API does not migrate | Set it, or run `uv run alembic upgrade head` |
+| `migrate_sqlite` says the target is not empty | The API already seeded the new database | Re-run with `--force` (empties the target first) |
 | Model output is nonsense / no gate raised | 4B model on CPU is weak                | Known limitation — see the caveat below              |
 
 ---
@@ -484,8 +552,8 @@ npm run build      # must pass with no type errors
 
 - **The model is small.** `qwen3.5:4b` will not produce a clean tool call every run. When it doesn't propose an action, the job simply completes without raising a gate. The deterministic protection lives in `gate_policy` — agents only *propose* actions. Email leaves only through the gated Gmail integration, after a person approves (off by default; see "Gmail (outbound email)"); nothing moves money.
 - **Not production-hardened.** The JWT secret in `.env` is a development default. Change it before anyone else uses this.
-- **Single machine, single user at a time.** SQLite plus a serialized worker. Concurrent agent runs need Postgres first.
-- **Walls are application-level.** Every deal read goes through the repositories, which filter by wall membership, but SQLite has no row-level security. The WebSocket feed is filtered too: an event naming a deal (`entity_changed {kind, deal_id}` and the handoff/job events) reaches only users on that deal's wall, and is dropped if the wall cannot be read. Real walls need Postgres (PRD D1).
+- **Single machine.** One local PostgreSQL container and one worker. The database no longer limits concurrency (segment claims use `SKIP LOCKED`, audit appends an advisory lock), but rate limits and the model-call semaphore are still per process.
+- **Walls are enforced twice: in the repositories and by PostgreSQL row-level security** (PRD D1). Row-level security is enabled and forced on every deal-scoped table: `deals`, `deal_party`, `deal_stage_history`, `stage_guard_evaluation`, `mandate`, `mandate_criteria`, `document`, `doc_version`, `doc_access_log`, `extraction`, `diligence_item`, `finding`, `deal_signoff`, `condition_precedent`, `deal_note`, `wall`, `wall_member`, `jobs`, `segments`, `task`, `handoff`, `agent_run`, `audit_entries`, `outbound_message`, `trace_span`, `doc_chunk`, `deal_intake`. Every transaction starts with `SET LOCAL aura.viewer = <username>`, from the user bound to the session when a repository is built for it (`aura/data/walls.py`, `bind_viewer`). A row is visible when the viewer is `:system` (the worker, seeding, the SQLite import, audit verification, span export), or when its deal is one the viewer may see: a deal whose wall lists the viewer, or a deal the viewer owns that has no wall yet (the moment inside deal creation before the wall row exists). Rows with no deal stay visible where `deal_id` may be empty; child tables without a `deal_id` follow their parent; a user always sees their own `wall_member` rows; a `deal_intake` row is private to its creator until confirmed, then follows the confirmed deal's wall. The same rule is the `WITH CHECK`, so a write outside the wall fails. With no viewer set, no deal-scoped row is visible. `:system` cannot be a username (usernames allow only letters, digits, `.`, `_`, `-`), and a session that has acted as `:system` stays `:system`. **What this does and does not protect:** the app sets `aura.viewer` itself, so row-level security catches a forgotten filter or a buggy query in the app, not compromised app code. `aura_app` cannot disable row-level security, drop policies, `SET ROLE` or use `row_security = off`. Admins are bound by walls as before. The WebSocket feed is filtered too: an event naming a deal (`entity_changed {kind, deal_id}` and the handoff/job events) reaches only users on that deal's wall, and is dropped if the wall cannot be read.
 - **Compliance moves a deal only to override its own guards** (T9, T11), always with a written justification that is stored on the evaluation row and audited.
 - **Nothing leaves the machine** unless you connect Gmail and set `AURA_OUTBOUND_MODE` — that is deliberate: local model, local database, no telemetry (CrewAI and OpenTelemetry telemetry are switched off in `.env`).
 
@@ -498,7 +566,10 @@ Aura/
 ├── README.md           # product overview and quick start
 ├── RUNNING.md          # this file
 ├── backend/            # FastAPI + hexagonal core + agents + MCP
+│   └── migrations/     # Alembic: versions/ (PostgreSQL baseline), sqlite_legacy/ (old chain, never run)
 ├── frontend/           # Next.js portal ("Ledger" design system)
+├── scripts/db.ps1      # the PostgreSQL container: up | down | reset | psql | status
+├── infra/postgres/     # compose.yaml and the init script that creates roles and extensions
 └── docs/
     ├── PRD-v1.md               # what v1 builds and why, with decisions
     ├── PRD-v1-conformance.md   # every requirement mapped to code, tests and UI; E2E run log

@@ -2,11 +2,9 @@
 uses the fake Gmail client, in process or behind the real MCP stdio server."""
 import json
 import os
-import sqlite3
 from contextlib import contextmanager
 
 import pytest
-from alembic import command
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -18,7 +16,6 @@ from aura.config import get_settings
 from aura.core.domain.enums import ActionCategory
 from aura.core.domain.outbound import MailerStatus, MailResult
 from aura.core.policy.gate_policy import classify, requires_approval
-from aura.data.engine import Base, make_engine
 from aura.data.models.tables import HandoffRow, TaskRow, UserRow
 from aura.data.repositories.sql_deals import SqlWallRepository
 from aura.data.walls import SYSTEM
@@ -26,9 +23,9 @@ from aura.mcp import gmail_auth
 from aura.mcp.gmail_client import FakeGmailClient
 from aura.mcp.servers import gmail_server
 from aura.worker import runner
+from tests.integration.pgtest import fresh_engine
 from tests.integration.helpers import (DIRECTIVE, NullEvents, link, make_deal, party,
                                        run_worker, submit)
-from tests.integration.test_migrations_m4 import _cfg, _tables
 
 TO = "ravi@acme-capital.in"
 
@@ -106,7 +103,7 @@ def _outbound(api, handoff_id=None):
 
 
 def _audit(api, action):
-    return [json.loads(p) for (p,) in api.session.execute(
+    return [p for (p,) in api.session.execute(
         text("SELECT payload FROM audit_entries WHERE action = :a ORDER BY id"),
         {"a": action})]
 
@@ -291,12 +288,10 @@ def test_the_gmail_server_checks_recipient_and_mode(api, gmail, monkeypatch):
 
 
 def test_the_real_mailer_round_trips_the_stdio_server_with_the_fake_client(tmp_path):
-    """McpGmailMailer spawns gmail_server over stdio; the server reads a scratch database and
+    """McpGmailMailer spawns gmail_server over stdio; the server reads the test database and
     uses the fake Gmail client (AURA_GMAIL_FAKE=1 is honoured only with AURA_TEST_MODE=1)."""
-    db = tmp_path / "rt.db"
-    url = f"sqlite:///{db.as_posix()}"
-    engine = make_engine(url)
-    Base.metadata.create_all(engine)
+    url = get_settings().database_url
+    engine = fresh_engine()
     with Session(engine) as s:
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
@@ -311,7 +306,6 @@ def test_the_real_mailer_round_trips_the_stdio_server_with_the_fake_client(tmp_p
                          directive={"decision": "approve"}, resolved_by="bhavesh",
                          resolved_at=now))
         s.commit()
-    engine.dispose()
     log = tmp_path / "gmail.jsonl"
     env = {**os.environ, "AURA_DATABASE_URL": url, "AURA_OUTBOUND_MODE": "gmail_draft",
            "AURA_GMAIL_FAKE": "1", "AURA_TEST_MODE": "1", "AURA_GMAIL_FAKE_LOG": str(log)}
@@ -444,30 +438,3 @@ def test_token_store_round_trip_and_status_hide_secrets(monkeypatch, tmp_path):
     assert not (tmp_path / "gmail_token.enc").exists()
 
 
-# --- migration -----------------------------------------------------------------------------------
-
-def test_migration_0013_upgrades_and_downgrades(tmp_path):
-    db, cfg = tmp_path / "o.db", _cfg(tmp_path / "o.db")
-    command.upgrade(cfg, "0012_harness_eval_obs")
-    command.upgrade(cfg, "0013_outbound_email")
-    with sqlite3.connect(db) as c:
-        assert {"party_contact", "suppression", "outbound_message"} <= _tables(c)
-        c.execute("INSERT INTO party (party_type, display_name, created_at) VALUES "
-                  "('company', 'P', '2026-10-07')")
-        c.execute("INSERT INTO party_contact (party_id, name, email, is_primary, created_by, "
-                  "created_at) VALUES (1, '', 'a@b.co', 1, 'x', '2026-10-07')")
-        for bad in ("A@B.co", "no-at-sign", "a b@c.co"):
-            with pytest.raises(sqlite3.IntegrityError):
-                c.execute("INSERT INTO party_contact (party_id, name, email, is_primary, "
-                          "created_by, created_at) VALUES (1, '', ?, 0, 'x', '2026-10-07')",
-                          (bad,))
-        with pytest.raises(sqlite3.IntegrityError):  # unique per party
-            c.execute("INSERT INTO party_contact (party_id, name, email, is_primary, "
-                      "created_by, created_at) VALUES (1, '', 'a@b.co', 0, 'x', '2026-10-07')")
-        with pytest.raises(sqlite3.IntegrityError):
-            c.execute("INSERT INTO suppression (kind, value, reason, created_by, created_at) "
-                      "VALUES ('phone', 'x', '', 'x', '2026-10-07')")
-    command.downgrade(cfg, "0012_harness_eval_obs")
-    with sqlite3.connect(db) as c:
-        assert not {"party_contact", "suppression", "outbound_message"} & _tables(c)
-    command.upgrade(cfg, "head")

@@ -16,6 +16,9 @@ class Deal:
     opened_at: datetime
     closed_at: datetime | None = None
     regulatory_flags: list[str] = field(default_factory=list)
+    # Class-specific terms, validated against the class's JSON Schema at this version.
+    profile: dict = field(default_factory=dict)
+    profile_schema_version: int = 1
 
 
 @dataclass

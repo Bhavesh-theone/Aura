@@ -20,6 +20,7 @@ from aura.core.services import (compliance, create_deal, diligence, documents, h
                                 mandates, parties, submit_job, transition_deal, users, walls)
 from aura.core.services.run_segment import run_segment
 from aura.data.demo_engine import Desk, NullEvents, at
+from aura.data.demo_profiles import demo_profile
 from aura.data.run_sink import SqlAgentRunSink
 from aura.data.uow import SqlUnitOfWork
 from aura.data.walls import SYSTEM
@@ -201,7 +202,7 @@ class Story:
             r = self.r(self.owner)
             deal = create_deal.create_deal(self.ext, self.name, self.cls, self.owner,
                                            role_of(self.owner), r.deals, r.history, r.audit,
-                                           r.walls, r.users)
+                                           r.walls, r.users, profile=demo_profile(self.ext))
             self.deal_id = deal.id
         self._at(day, hhmm, "created", run)
 

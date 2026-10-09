@@ -13,7 +13,7 @@ from aura.core.domain.outbound import (OutboundMessage, OutboundMode, OutboundSt
                                        PartyContact, Suppression, SuppressionKind)
 from aura.core.policy.email_policy import domain_of
 from aura.data.models.tables import OutboundMessageRow, PartyContactRow, SuppressionRow
-from aura.data.walls import Viewer, check_viewer, walled
+from aura.data.walls import Viewer, bind_viewer, walled
 
 
 def _contact(row: PartyContactRow) -> PartyContact:
@@ -122,7 +122,7 @@ class SqlSuppressionRepository:
 
 class SqlOutboundRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def add(self, message: OutboundMessage) -> OutboundMessage:
         row = _insert(self.s, OutboundMessageRow(

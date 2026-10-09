@@ -126,7 +126,7 @@ Priority: **P0** = v1 cannot ship without it. **P1** = ships in v1 if time allow
 ### F10 — Deal walls, simplified (P1)
 - `wall` and `wall_member` tables, with one wall per deal.
 - Every read of a deal and its documents is checked against wall membership **in the repository layer** (the data-access code), so no API route can skip the check.
-- This is weaker than SOSPE C1, which requires database row-level security plus an OPA policy plus encryption. SQLite has no row-level security; full walls depend on moving to Postgres (§9, D1).
+- This is weaker than SOSPE C1, which requires database row-level security plus an OPA policy plus encryption. Since the move to PostgreSQL the walls are also enforced by database row-level security (D1); OPA and encryption remain open.
 
 ### F11 — MCP deals server reads the database (P0)
 - Replace the hard-coded `_DEALS` dictionary in `mcp/servers/deals_server.py` with repository reads, so agents see real deals and real stages.
@@ -175,8 +175,8 @@ Columns, CHECK constraints and naming follow SOSPE §6. Where a Postgres-only fe
 
 | # | Decision | Options | Recommendation |
 |---|---|---|---|
-| D1 | Database | Stay on SQLite / move to Postgres now | **Decided 2026-10-06: stay on SQLite for v1** (keep the current tech stack). F10 walls are enforced in the repository layer. Postgres row-level security is the upgrade path, needed before multiple concurrent users or the first real UPSI-bearing deal. |
-| D2 | Primary keys | Keep integer keys / switch to UUIDv7 | **Decided 2026-10-06: keep integer keys for v1.** Switch to UUIDv7 together with the Postgres move. |
+| D1 | Database | Stay on SQLite / move to Postgres now | **Decided 2026-10-06: stay on SQLite for v1. Superseded: moved to PostgreSQL 16 + pgvector.** F10 walls are now enforced twice: by the repository-layer wall filters and by PostgreSQL row-level security (enabled and forced on every deal-scoped table, keyed on a per-transaction `aura.viewer` set by the app). The app connects as `aura_app`, which cannot bypass or change the policies. Row-level security guards against a missing filter or a buggy query in the app, not against compromised app code, since the app sets the viewer. The SQLite data is imported once with `aura.data.migrate_sqlite`, audit chain re-verified. |
+| D2 | Primary keys | Keep integer keys / switch to UUIDv7 | **Decided 2026-10-06: keep integer keys for v1. Confirmed with the PostgreSQL move: integer keys kept, as `BIGINT` identity columns.** No id is exposed outside the firm in a way that needs it to be unguessable: every request is authenticated and wall-checked, and row-level security hides other deals. Integer ids keep URLs and audit payloads that reference ids stable; the SQLite import keeps every id, so the audit chain (whose payloads contain ids) verifies unchanged; joins and indexes stay simpler. A UUID can be added later as a separate external-id column if ids ever leave the firm. |
 | D3 | Stage names | Map the current free-text stages onto SOSPE's / keep both | Map them once in a migration; keep a single vocabulary. |
 | D4 | Model capability | `qwen3.5:4b` local / larger local model | Keep 4B for v1. Agents only classify and draft, and every decision goes to a human, so a weak model costs speed, not correctness. |
 | D5 | First real deal | Which deal to use for the end-to-end run | Needs a business owner: pick one live DEBT or ALLIANCE deal, which are the shortest classes in SOSPE §1.2.2. |

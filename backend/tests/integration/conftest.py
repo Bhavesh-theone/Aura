@@ -5,10 +5,11 @@ from sqlalchemy.orm import Session
 
 from aura.api.deps import get_anchor_path, get_store, get_uow
 from aura.api.main import app
-from aura.data.engine import Base, make_engine
 from aura.data.filestore import LocalFileStore
 from aura.data.seed import seed_reference
 from aura.data.uow import SqlUnitOfWork
+from aura.data.walls import SYSTEM, bind_viewer, reset_viewer
+from tests.integration.pgtest import fresh_engine
 
 PASSWORDS = {"bhavesh": "admin123", "asha": "analyst123", "priya": "compliance123",
              "admin": "admin123"}
@@ -39,10 +40,16 @@ class Api:
 
 
 def _override_uow(session: Session):
-    """The app's per-request unit of work, over the test's shared in-memory session."""
+    """The app's per-request unit of work, over the test's shared session. Each request
+    starts unbound, as a fresh production session would, and binds its own user (so RLS
+    applies to it). Between requests the test itself acts as SYSTEM, like the worker."""
     def override():
-        with SqlUnitOfWork(session).transaction() as uow:
-            yield uow
+        reset_viewer(session)
+        try:
+            with SqlUnitOfWork(session).transaction() as uow:
+                yield uow
+        finally:
+            bind_viewer(session, SYSTEM)
     return override
 
 
@@ -51,9 +58,8 @@ def api(tmp_path, monkeypatch):
     # Cheap bcrypt cost: the tests hash two passwords per fixture and verify on every login.
     real_gensalt = bcrypt.gensalt
     monkeypatch.setattr(bcrypt, "gensalt", lambda *a, **k: real_gensalt(rounds=4))
-    engine = make_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    session = Session(engine)
+    session = Session(fresh_engine())
+    bind_viewer(session, SYSTEM)
     seed_reference(session)
     store = LocalFileStore(tmp_path / "docs")
     app.dependency_overrides[get_uow] = _override_uow(session)

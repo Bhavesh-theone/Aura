@@ -2,16 +2,21 @@ from datetime import datetime, timezone
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect, select
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aura.api.security import hash_password
-from aura.config import BACKEND_DIR
+from aura.config import BACKEND_DIR, get_settings
 from aura.core.domain.audit import AuditEntry
 from aura.core.domain.enums import ChecklistLayer, Role
 from aura.core.domain.enums import DealStage as S
 from aura.core.domain.enums import TransactionClass
 from aura.core.services.create_deal import create_deal
+from aura.core.services.deal_profile import (CURRENT_PROFILE_VERSION, changed_keys,
+                                             validate_profile)
+from aura.data.demo_profiles import DEMO_PROFILES, demo_profile
 from aura.data.engine import SessionLocal, engine
 from aura.data.models.tables import (ChecklistItemTemplateRow, ChecklistTemplateRow,
                                      StageGuardRow, UserRow, WallMemberRow, WallRow)
@@ -37,7 +42,7 @@ GUARDS = [
      "ON pi.party_id = dp.party_id WHERE dp.deal_id = :deal_id)",
      "At least one party is linked to the deal and has a statutory identifier", "dealmaker"),
     ("T2_engagement_letter", S.QUALIFIED, S.MANDATED,
-     _DOC.format("doc_class = 'engagement_letter' AND is_executed = 1"),
+     _DOC.format("doc_class = 'engagement_letter' AND is_executed"),
      "An engagement letter is on file and marked executed", "dealmaker"),
     ("T3_hard_criterion", S.MANDATED, S.PREPARED,
      "SELECT EXISTS(SELECT 1 FROM mandate m JOIN mandate_criteria c ON c.mandate_id = m.id "
@@ -49,7 +54,7 @@ GUARDS = [
     ("T5_counterparty_and_nda", S.MARKETED, S.MATCHED,
      "SELECT EXISTS(SELECT 1 FROM deal_party WHERE deal_id = :deal_id AND "
      + _PARTY_ROLES + ") AND EXISTS(SELECT 1 FROM document WHERE deal_id = :deal_id "
-     "AND doc_class = 'nda' AND is_executed = 1)",
+     "AND doc_class = 'nda' AND is_executed)",
      "A buyer, investor or lender is linked and an NDA is on file and marked executed",
      "dealmaker"),
     ("T6_two_counterparties", S.MATCHED, S.BID_AUCTION,
@@ -60,7 +65,7 @@ GUARDS = [
      _DOC.format("doc_class = 'valuation_report'"),
      "A valuation report is on file", "dealmaker"),
     ("T8_term_sheet", S.NEGOTIATION, S.DILIGENCE,
-     _DOC.format("doc_class = 'term_sheet' AND is_executed = 1"),
+     _DOC.format("doc_class = 'term_sheet' AND is_executed"),
      "A term sheet is on file and marked executed", "dealmaker"),
     ("T9_no_open_blockers", S.DILIGENCE, S.DOCUMENTATION,
      "SELECT EXISTS(SELECT 1 FROM diligence_item WHERE deal_id = :deal_id) AND NOT "
@@ -68,11 +73,11 @@ GUARDS = [
      "AND status IN (" + _OPEN_BLOCKER_STATES + "))",
      "The diligence checklist exists and no blocker-severity item is still open", "compliance"),
     ("T9_compliance_signoff", S.DILIGENCE, S.DOCUMENTATION,
-     "SELECT (SELECT json_array_length(regulatory_flags) FROM deals WHERE id = :deal_id) = 0 "
+     "SELECT (SELECT jsonb_array_length(regulatory_flags) FROM deals WHERE id = :deal_id) = 0 "
      "OR EXISTS(SELECT 1 FROM deal_signoff WHERE deal_id = :deal_id)",
      "The deal has no regulatory flags, or compliance has signed it off", "compliance"),
     ("T10_definitive_agreement", S.DOCUMENTATION, S.CONDITIONS_PRECEDENT,
-     _DOC.format("doc_class IN ('spa', 'shpa') AND is_executed = 1"),
+     _DOC.format("doc_class IN ('spa', 'shpa') AND is_executed"),
      "A definitive agreement (SPA or SHPA) is on file and marked executed", "dealmaker"),
     ("T11_all_cps_cleared", S.CONDITIONS_PRECEDENT, S.CLOSED,
      "SELECT EXISTS(SELECT 1 FROM condition_precedent WHERE deal_id = :deal_id) AND NOT "
@@ -108,15 +113,30 @@ DEMO_DEALS = [("D-001", "Sunrise Infra", TransactionClass.DEBT),
               ("D-002", "Ravi Menon Ventures", TransactionClass.ALLIANCE)]
 
 
-def migrate() -> None:
-    """Bring the database to the latest revision. A pre-Alembic database (tables but no
-    version row) is stamped at the baseline first."""
+def alembic_config(url: str | None = None) -> Config:
+    """Alembic, pointed at a database as its owner (default AURA_MIGRATION_DATABASE_URL)."""
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
-    tables = set(inspect(engine).get_table_names())
-    if "deals" in tables and "alembic_version" not in tables:
-        command.stamp(cfg, "0001")
-    command.upgrade(cfg, "head")
+    url = url or get_settings().migration_database_url
+    if url:
+        cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+    return cfg
+
+
+def migrate() -> None:
+    """Bring the database to the latest revision as the schema owner. Without
+    AURA_MIGRATION_DATABASE_URL the app cannot migrate (aura_app has no DDL rights), so it
+    only checks the schema is already at head and refuses to start otherwise."""
+    cfg = alembic_config()
+    if get_settings().migration_database_url:
+        command.upgrade(cfg, "head")
+        return
+    head = ScriptDirectory.from_config(cfg).get_current_head()
+    with engine.connect() as conn:
+        current = MigrationContext.configure(conn).get_current_revision()
+    if current != head:
+        raise RuntimeError(f"database is at revision {current}, code expects {head}: run "
+                           "`uv run alembic upgrade head` with AURA_MIGRATION_DATABASE_URL")
 
 
 def seed_reference(s: Session) -> None:
@@ -174,6 +194,29 @@ def _ensure_demo_membership(s: Session, deal_ids: list[int]) -> None:
                                         payload={"username": username, "reason": "seed"}))
 
 
+def backfill_demo_profiles(s: Session) -> int:
+    """Give demo deals created before deal profiles existed their demo profile. Only an
+    empty profile is filled, so an edited one is never overwritten. Returns how many."""
+    deals, audit = SqlDealRepository(s, SYSTEM), SqlAuditRepository(s, SYSTEM)
+    filled = 0
+    for external_id in DEMO_PROFILES:
+        deal = deals.get_by_external_id(external_id)
+        if deal is None or deal.profile:
+            continue
+        profile = demo_profile(external_id)
+        validate_profile(deal.transaction_class, CURRENT_PROFILE_VERSION, profile)
+        deal.profile, deal.profile_schema_version = profile, CURRENT_PROFILE_VERSION
+        deals.update(deal)
+        audit.append(AuditEntry(id=None, job_id=None, deal_id=deal.id, actor="system",
+                                action="deal_profile_updated",
+                                created_at=datetime.now(timezone.utc),
+                                payload={"reason": "seed",
+                                         "profile_schema_version": CURRENT_PROFILE_VERSION,
+                                         "changed_keys": changed_keys({}, profile)}))
+        filled += 1
+    return filled
+
+
 def seed() -> None:
     migrate()
     with SessionLocal() as s:
@@ -188,7 +231,9 @@ def seed() -> None:
             if deal is None:
                 # bhavesh creates the demo deals, so he is the first member of each wall
                 deal = create_deal(external_id, name, cls, "bhavesh", Role.DEALMAKER, deals,
-                                   history, audit, walls, SqlUserRepository(s))
+                                   history, audit, walls, SqlUserRepository(s),
+                                   profile=demo_profile(external_id))
             deal_ids.append(deal.id)
         _ensure_demo_membership(s, deal_ids)
+        backfill_demo_profiles(s)
         s.commit()

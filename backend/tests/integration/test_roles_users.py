@@ -1,4 +1,6 @@
 """Roles (PRD R3): dealmaker, analyst, compliance and admin, enforced in the core services."""
+import json
+
 import pytest
 from sqlalchemy import text
 
@@ -115,8 +117,8 @@ def test_user_changes_are_audited_without_passwords(api):
                                     "WHERE action LIKE 'user_%' ORDER BY id")).all()
     assert [r[0] for r in rows] == ["user_created", "user_updated"]
     assert all(r[1] == "admin" and r[3] is None for r in rows)
-    assert "ravi-pass" not in "".join(r[2] for r in rows)
-    assert '"compliance"' in rows[1][2]
+    assert "ravi-pass" not in "".join(json.dumps(r[2]) for r in rows)
+    assert rows[1][2]["changes"]["role"]["to"] == "compliance"
 
 
 # ----------------------------------------------------------------- who may do what on a deal

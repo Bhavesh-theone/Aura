@@ -5,16 +5,16 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from aura.core.domain.audit import GENESIS_HASH, AuditEntry
-from aura.data.engine import Base, make_engine
 from aura.data.repositories.sql import SqlAuditRepository
 from aura.data.verify_audit import verify_chain
 from aura.data.walls import SYSTEM
+from tests.integration.helpers import tamper_audit
+from tests.integration.pgtest import fresh_engine
 
 
 @pytest.fixture()
 def session():
-    engine = make_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    engine = fresh_engine()
     with Session(engine) as s:
         yield s
 
@@ -41,22 +41,19 @@ def test_audit_rows_are_append_only(session):
     _append(SqlAuditRepository(session, SYSTEM), 1)
     session.commit()  # repositories only flush; the rollbacks below must not undo the row
     for sql in ("UPDATE audit_entries SET actor = 'x'", "DELETE FROM audit_entries"):
-        with pytest.raises(Exception, match="append-only"):
+        # the app role was never granted UPDATE/DELETE: it cannot rewrite history
+        with pytest.raises(Exception, match="permission denied"):
             session.execute(text(sql))
         session.rollback()
 
 
 def test_verify_detects_tampering_at_the_edited_row(session):
     _append(SqlAuditRepository(session, SYSTEM), 4)
-    session.execute(text("DROP TRIGGER trg_audit_entries_no_update"))
-    session.execute(text("UPDATE audit_entries SET actor = 'mallory' WHERE id = 2"))
-    session.commit()
+    tamper_audit(session, "UPDATE audit_entries SET actor = 'mallory' WHERE id = 2")
     assert verify_chain(session) == 2
 
 
 def test_verify_detects_deleted_row(session):
     _append(SqlAuditRepository(session, SYSTEM), 4)
-    session.execute(text("DROP TRIGGER trg_audit_entries_no_delete"))
-    session.execute(text("DELETE FROM audit_entries WHERE id = 2"))
-    session.commit()
+    tamper_audit(session, "DELETE FROM audit_entries WHERE id = 2")
     assert verify_chain(session) == 3

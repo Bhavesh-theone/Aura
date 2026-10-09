@@ -33,7 +33,7 @@ def test_a_later_email_proposal_on_the_deal_is_skipped_and_the_earlier_approval_
         "'handoff_skipped_per_directive'")).all()
     assert len(skipped) == 1
     assert skipped[0][1] == deal and skipped[0][2] == job["id"] and skipped[0][3] == "system"
-    assert '"approved": true' in skipped[0][0] and '"send_email"' in skipped[0][0]
+    assert skipped[0][0]["approved"] is True and skipped[0][0]["task_type"] == "send_email"
     # the earlier approval carries the job on: a new segment is queued, then it completes
     assert api.call("GET", f"/api/jobs/{job['id']}").json()["status"] == "pending"
     run_worker(api)

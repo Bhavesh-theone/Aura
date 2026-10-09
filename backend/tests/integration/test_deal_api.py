@@ -90,7 +90,9 @@ def test_regression_requires_reason_and_is_flagged(api):
 def test_history_is_immutable(api):
     d = _new_deal(api)["id"]
     for sql in ("UPDATE deal_stage_history SET actor = 'evil'", "DELETE FROM deal_stage_history"):
-        with pytest.raises(Exception, match="append-only"):
+        # the app role was never granted UPDATE/DELETE on the history (the owner-side
+        # append-only trigger is covered in test_rls.py)
+        with pytest.raises(Exception, match="permission denied"):
             api.session.execute(text(sql))
         api.session.rollback()
     assert api.call("GET", f"/api/deals/{d}").json()["history"][0]["actor"] == "bhavesh"
@@ -107,7 +109,7 @@ def test_broken_guard_fails_closed(api):
     d = _new_deal(api)["id"]
     api.session.execute(text(
         "INSERT INTO stage_guard (from_stage, to_stage, guard_name, sql_text, severity, active)"
-        " VALUES ('ORIGINATED', 'QUALIFIED', 'bad', 'SELECT * FROM nope', 'blocking', 1)"))
+        " VALUES ('ORIGINATED', 'QUALIFIED', 'bad', 'SELECT * FROM nope', 'blocking', true)"))
     api.session.commit()
     r = _move(api, d, "QUALIFIED")
     assert r.status_code == 409
@@ -144,7 +146,7 @@ def test_documents_upsi_download_and_access_log(api):
     n = api.session.execute(text("SELECT COUNT(*) FROM doc_access_log")).scalar()
     assert n == 1
     assert len(api.call("GET", f"/api/deals/{d}/documents").json()) == 1
-    with pytest.raises(Exception, match="append-only"):
+    with pytest.raises(Exception, match="permission denied"):  # the app cannot erase it
         api.session.execute(text("DELETE FROM doc_access_log"))
     api.session.rollback()
 
@@ -155,7 +157,8 @@ def test_upsi_check_constraint(api):
         api.session.execute(text(
             "INSERT INTO document (deal_id, doc_class, filename, sha256, byte_size, "
             "current_version, contains_upsi, sensitivity, uploaded_by, uploaded_at, "
-            "class_confirmed) VALUES (:d, 'nda', 'f', 'x', 1, 1, 1, 2, 'u', '2026-01-01', 0)"),
+            "class_confirmed) VALUES (:d, 'nda', 'f', 'x', 1, 1, true, 2, 'u', '2026-01-01', "
+            "false)"),
             {"d": d})
     api.session.rollback()
 

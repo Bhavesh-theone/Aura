@@ -173,7 +173,7 @@ def test_if_the_run_cannot_be_recorded_its_output_is_not_used(api, monkeypatch):
     assert api.session.execute(text("SELECT COUNT(*) FROM agent_run")).scalar() == 0
     err = api.session.execute(text("SELECT payload FROM audit_entries "
                                    "WHERE action = 'segment_failed'")).scalar()
-    assert "could not write agent_run" in err
+    assert "could not write agent_run" in err["error"]
 
 
 def test_stage_guard_evaluations_carry_plain_english_descriptions(api):

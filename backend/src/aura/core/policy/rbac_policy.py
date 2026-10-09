@@ -18,6 +18,7 @@ class Capability(str, Enum):
     MANAGE_WALL = "manage_wall"
     SIGN_OFF = "sign_off"
     EDIT_REGULATORY_FLAGS = "edit_regulatory_flags"
+    EDIT_DEAL_PROFILE = "edit_deal_profile"    # class-specific deal terms (deals.profile)
     VERIFY_EXTRACTION = "verify_extraction"
     MANAGE_USERS = "manage_users"
     MANAGE_AUTONOMY = "manage_autonomy"        # promote a demoted capability
@@ -31,7 +32,7 @@ class Capability(str, Enum):
 
 _C = Capability
 _DEAL_WORK = {_C.CREATE_DEAL, _C.EDIT_DEAL_DATA, _C.SUBMIT_JOB, _C.VERIFY_EXTRACTION,
-              _C.VIEW_CONTACTS, _C.MANAGE_CONTACTS}
+              _C.VIEW_CONTACTS, _C.MANAGE_CONTACTS, _C.EDIT_DEAL_PROFILE}
 
 _GRANTS: dict[Role, frozenset[Capability]] = {
     Role.ADMIN: frozenset({_C.MANAGE_USERS, _C.MANAGE_AUTONOMY, _C.VIEW_INTEGRATIONS}),

@@ -94,7 +94,8 @@ def test_patch_sets_executed_and_class_and_a_chosen_class_is_confirmed(api):
                     json={"doc_class": "teaser"}).status_code == 422
     audit = api.session.execute(text("SELECT payload FROM audit_entries WHERE action = "
                                      "'document_updated' ORDER BY id")).scalars().all()
-    assert len(audit) == 2 and '"term_sheet"' in audit[0] and '"is_executed": true' in audit[0]
+    assert len(audit) == 2
+    assert audit[0]["doc_class"] == "term_sheet" and audit[0]["is_executed"] is True
 
 
 def test_class_confirmed_by_patch_stays_when_only_the_flag_changes_later(api):
@@ -125,7 +126,7 @@ def test_view_and_versions_are_walled(api):
 def test_doc_version_primary_key_is_document_and_version(api):
     deal = make_deal(api)
     doc = upload(api, deal, "a.pdf", "nda")
-    with pytest.raises(Exception, match="UNIQUE|PRIMARY"):
+    with pytest.raises(Exception, match="duplicate key|unique"):
         api.session.execute(text(
             "INSERT INTO doc_version (document_id, version, sha256, byte_size, uploaded_by, "
             "uploaded_at) VALUES (:d, 1, 'x', 1, 'u', '2026-01-01')"), {"d": doc["id"]})

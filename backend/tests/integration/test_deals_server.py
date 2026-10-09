@@ -4,7 +4,6 @@ from sqlalchemy.orm import sessionmaker
 from aura.api.security import hash_password
 from aura.core.domain.enums import Role, TransactionClass
 from aura.core.services.create_deal import create_deal
-from aura.data.engine import Base, make_engine
 from aura.data.models.tables import UserRow
 from aura.data.repositories.sql import SqlAuditRepository
 from aura.data.repositories.sql_deals import (SqlDealRepository, SqlStageHistoryRepository,
@@ -13,12 +12,12 @@ from aura.data.walls import SYSTEM
 from aura.mcp.identity import acting_as
 from aura.mcp.servers import deals_server
 from aura.mcp.servers.deals_server import add_internal_note, get_deal_status, list_deals
+from tests.integration.pgtest import fresh_engine
 
 
 @pytest.fixture(autouse=True)
 def db(monkeypatch):
-    engine = make_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    engine = fresh_engine()
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as s:
         for name in ("bhavesh", "asha"):

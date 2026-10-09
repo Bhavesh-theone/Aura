@@ -5,15 +5,14 @@ from sqlalchemy.orm import Session
 from aura.api.deps import get_uow
 from aura.api.main import app
 from aura.api.security import hash_password
-from aura.data.engine import Base, make_engine
 from aura.data.models.tables import UserRow
 from aura.data.uow import SqlUnitOfWork
+from tests.integration.pgtest import fresh_engine
 
 
 @pytest.fixture()
 def client():
-    engine = make_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    engine = fresh_engine()
     session = Session(engine)
     session.add(UserRow(username="bhavesh", password_hash=hash_password("admin123"),
                         role="dealmaker"))

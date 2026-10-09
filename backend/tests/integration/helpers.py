@@ -88,3 +88,20 @@ def link(api, deal_id, party_id, role, user="bhavesh"):
 def move(api, deal_id, to, user="bhavesh", **body):
     return api.call("POST", f"/api/deals/{deal_id}/transition", user=user,
                     json={"to_stage": to, **body})
+
+
+def tamper_audit(session, *statements, params=None) -> None:
+    """Rewrite audit history the way an attacker with the owner's credentials would: the app
+    role has no UPDATE/DELETE on audit_entries, so this goes through the owner connection
+    with the append-only trigger switched off for the duration. The test session's
+    transaction is ended first so it holds no locks the ALTER TABLE would wait on."""
+    from tests.integration.pgtest import owner_engine
+    session.commit()
+    with owner_engine().begin() as conn:
+        conn.execute(text("ALTER TABLE audit_entries DISABLE TRIGGER "
+                          "trg_audit_entries_append_only"))
+        for sql in statements:
+            conn.execute(text(sql), params or {})
+        conn.execute(text("ALTER TABLE audit_entries ENABLE TRIGGER "
+                          "trg_audit_entries_append_only"))
+    session.expire_all()

@@ -3,7 +3,7 @@ from typing import Any
 
 from aura.api.schemas.harness import EvaluationMetricsOut, SecurityMetricsOut
 from aura.api.schemas.outbound import OutboundMetricsOut
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from aura.core.domain.enums import (CPStatus, CriterionHardness, CriterionOperator, DealStage,
                                     DiligenceStatus, DocClass, FindingType, IdentifierScheme,
@@ -22,6 +22,8 @@ class DealOut(BaseModel):
     opened_at: datetime
     closed_at: datetime | None
     regulatory_flags: list[str]
+    profile: dict = {}
+    profile_schema_version: int = 1
 
 
 class DealPartyOut(BaseModel):
@@ -49,6 +51,9 @@ class CreateDealRequest(BaseModel):
     external_id: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=200)
     transaction_class: TransactionClass
+    # Class-specific terms; validated against GET /api/deal-profiles/schemas/{class}.
+    profile: dict[str, Any] | None = None
+    profile_schema_version: int | None = Field(default=None, ge=1)
 
 
 class EvaluationOut(BaseModel):
@@ -212,7 +217,17 @@ class DocumentVersionOut(BaseModel):
 
 
 class UpdateDealRequest(BaseModel):
-    regulatory_flags: list[str]
+    """Either or both: regulatory flags (dealmaker or compliance) and the deal profile
+    (dealmaker or analyst; replaces the whole profile)."""
+    regulatory_flags: list[str] | None = None
+    profile: dict[str, Any] | None = None
+    profile_schema_version: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _something_to_update(self):
+        if self.regulatory_flags is None and self.profile is None:
+            raise ValueError("Give regulatory_flags, profile, or both")
+        return self
 
 
 class SignoffRequest(BaseModel):

@@ -6,12 +6,12 @@ from sqlalchemy.orm import Session
 from aura.core.domain.enums import HandoffStatus, JobStatus, SegmentStatus
 from aura.core.domain.job import Job
 from aura.core.domain.segment import Segment
-from aura.data.engine import Base, make_engine
 from aura.data.repositories.sql import (SqlAgentRunRepository, SqlHandoffRepository,
                                         SqlJobRepository, SqlSegmentRepository)
 from aura.data.walls import SYSTEM
 from aura.worker.runner import run_once
 from aura.worker.stub_orchestrator import StubOrchestrator
+from tests.integration.pgtest import fresh_engine
 
 
 class NullEvents:
@@ -21,8 +21,7 @@ class NullEvents:
 
 @pytest.fixture()
 def session():
-    engine = make_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    engine = fresh_engine()
     with Session(engine) as s:
         yield s
 

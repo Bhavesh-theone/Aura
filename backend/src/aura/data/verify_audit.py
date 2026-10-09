@@ -13,13 +13,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import make_url, select
 from sqlalchemy.orm import Session
 
-from aura.config import BACKEND_DIR, Settings, get_settings
-from aura.core.domain.audit import GENESIS_HASH, compute_row_hash
-from aura.data import mappers
+from aura.config import BACKEND_DIR, get_settings
+from aura.core.domain.audit import GENESIS_HASH, AuditEntry, compute_row_hash
 from aura.data.models.tables import AuditRow
+from aura.data.walls import system_scope
 
 
 @dataclass
@@ -39,28 +39,33 @@ class AuditVerification:
 
 
 def default_anchor_path() -> Path | None:
-    """backend/data/audit_anchor.json for the default database; beside the file for any
-    other SQLite database (so a scratch copy never compares against the real anchor);
-    AURA_AUDIT_ANCHOR_PATH overrides both. None for an in-memory database."""
+    """backend/data/audit_anchor.json for the `aura` database; for any other database
+    (aura_test, a scratch copy) backend/data/audit_anchor.<database>.json, so a copy never
+    compares against the real anchor. AURA_AUDIT_ANCHOR_PATH overrides both."""
     s = get_settings()
     if s.audit_anchor_path:
         return Path(s.audit_anchor_path)
-    if s.database_url == Settings.model_fields["database_url"].default:
-        return BACKEND_DIR / "data" / "audit_anchor.json"
-    prefix = "sqlite:///"
-    if s.database_url.startswith(prefix) and ":memory:" not in s.database_url:
-        return Path(s.database_url[len(prefix):] + ".audit_anchor.json")
-    return None
+    database = make_url(s.database_url).database or "aura"
+    name = "audit_anchor.json" if database == "aura" else f"audit_anchor.{database}.json"
+    return BACKEND_DIR / "data" / name
 
 
 def verify_chain(session: Session) -> int | None:
-    """Return the id of the first row whose link is broken, or None if the chain is intact."""
+    """Return the id of the first row whose link is broken, or None if the chain is intact.
+    Reads every row across every wall (system_scope), whoever the session acts for."""
     prev = GENESIS_HASH
-    for row in session.scalars(select(AuditRow).order_by(AuditRow.id)):
-        entry = mappers.audit_to_domain(row)
-        if row.prev_hash != prev or row.row_hash != compute_row_hash(prev, entry):
-            return row.id
-        prev = row.row_hash
+    with system_scope(session):
+        rows = session.execute(select(AuditRow.id, AuditRow.job_id, AuditRow.actor,
+                                      AuditRow.action, AuditRow.payload, AuditRow.created_at,
+                                      AuditRow.deal_id, AuditRow.prev_hash, AuditRow.row_hash)
+                               .order_by(AuditRow.id)).all()
+    for r in rows:
+        entry = AuditEntry(id=r.id, job_id=r.job_id, actor=r.actor, action=r.action,
+                           payload=r.payload or {}, created_at=r.created_at,
+                           deal_id=r.deal_id, prev_hash=r.prev_hash, row_hash=r.row_hash)
+        if r.prev_hash != prev or r.row_hash != compute_row_hash(prev, entry):
+            return r.id
+        prev = r.row_hash
     return None
 
 
@@ -89,8 +94,9 @@ def write_anchor(path: Path, head_id: int, head_hash: str) -> None:
 
 
 def _head(session: Session) -> tuple[int, str] | None:
-    row = session.execute(select(AuditRow.id, AuditRow.row_hash)
-                          .order_by(AuditRow.id.desc()).limit(1)).first()
+    with system_scope(session):
+        row = session.execute(select(AuditRow.id, AuditRow.row_hash)
+                              .order_by(AuditRow.id.desc()).limit(1)).first()
     return (row[0], row[1]) if row else None
 
 
@@ -114,8 +120,9 @@ def verify(session: Session, anchor_file: Path | None) -> AuditVerification:
             anchor_problem = (f"audit tail deleted: chain head is id {head[0] if head else 0}"
                               f", anchor says id {anchored_id}")
         else:
-            row_hash = session.scalar(select(AuditRow.row_hash)
-                                      .where(AuditRow.id == anchored_id))
+            with system_scope(session):
+                row_hash = session.scalar(select(AuditRow.row_hash)
+                                          .where(AuditRow.id == anchored_id))
             ok = row_hash == anchored_hash
             anchor_broken_at = None if ok else anchored_id
             anchor_problem = "" if ok else f"audit entry {anchored_id} no longer matches the anchor"

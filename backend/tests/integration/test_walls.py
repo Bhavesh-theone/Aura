@@ -167,7 +167,7 @@ def test_membership_changes_are_audited_and_validated(api, walled):
                                     "WHERE action LIKE 'wall_member_%' AND actor = 'priya' "
                                     "ORDER BY id")).all()
     assert [r[0] for r in rows] == ["wall_member_added", "wall_member_removed"]
-    assert '"asha"' in rows[0][2] and rows[0][3] == d
+    assert rows[0][2]["username"] == "asha" and rows[0][3] == d
 
 
 @pytest.mark.parametrize("user", ["asha", "bhavesh", "admin"])

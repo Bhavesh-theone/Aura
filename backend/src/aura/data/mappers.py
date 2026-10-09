@@ -57,7 +57,9 @@ def deal_to_domain(row: DealRow) -> Deal:
                 transaction_class=TransactionClass(row.transaction_class),
                 owner=row.owner, outcome=Outcome(row.outcome) if row.outcome else None,
                 opened_at=row.opened_at, closed_at=row.closed_at,
-                regulatory_flags=list(row.regulatory_flags or []))
+                regulatory_flags=list(row.regulatory_flags or []),
+                profile=dict(row.profile or {}),
+                profile_schema_version=row.profile_schema_version or 1)
 
 
 def history_to_domain(row: DealStageHistoryRow) -> StageHistoryEntry:

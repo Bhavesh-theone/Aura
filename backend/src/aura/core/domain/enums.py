@@ -239,3 +239,12 @@ class HandoffStatus(str, Enum):
     OPEN = "open"
     RESOLVED = "resolved"
     ESCALATED = "escalated"
+
+
+class IntakeStatus(str, Enum):
+    """A deal intake (phase 3): drafted, extracted, reviewed, then confirmed or discarded."""
+    DRAFT = "draft"
+    PROCESSING = "processing"
+    REVIEW = "review"
+    CONFIRMED = "confirmed"
+    DISCARDED = "discarded"

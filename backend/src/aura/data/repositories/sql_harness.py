@@ -10,7 +10,7 @@ from aura.core.domain.harness import (CapabilityAutonomy, DealNote, EvalCaseResu
                                       TraceSpanRecord)
 from aura.data.models.tables import (CapabilityAutonomyRow, DealNoteRow, EvalCaseResultRow,
                                      EvalRunRow, TraceSpanRow)
-from aura.data.walls import Viewer, check_viewer, walled
+from aura.data.walls import Viewer, bind_viewer, walled
 
 
 def _case(row: EvalCaseResultRow) -> EvalCaseResult:
@@ -112,7 +112,7 @@ class SqlAutonomyRepository:
 
 class SqlNoteRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     @staticmethod
     def _to_domain(row: DealNoteRow) -> DealNote:
@@ -134,7 +134,7 @@ class SqlNoteRepository:
 
 class SqlTraceRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def list_trace(self, trace_id: str) -> list[TraceSpanRecord]:
         stmt = walled(select(TraceSpanRow).where(TraceSpanRow.trace_id == trace_id),

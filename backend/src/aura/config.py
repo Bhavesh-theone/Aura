@@ -12,7 +12,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=BACKEND_DIR / ".env", env_prefix="AURA_",
                                       extra="ignore")
 
-    database_url: str = f"sqlite:///{(BACKEND_DIR / 'aura.db').as_posix()}"
+    # PostgreSQL 16 + pgvector (scripts/db.ps1). The app connects as aura_app, a role that is
+    # not a superuser and owns no table, so row-level security always applies to it.
+    database_url: str = "postgresql+psycopg://aura_app:aura_app_dev@127.0.0.1:5433/aura"
+    # Alembic (and the SQLite import) connect as aura_owner, which owns the schema. Unset:
+    # the API does not migrate at start-up and only checks the schema is at head.
+    migration_database_url: str | None = None
     jwt_secret: str = "dev-secret-change-me"
     jwt_ttl_minutes: int = 480
     ollama_base_url: str = "http://localhost:11434"

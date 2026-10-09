@@ -20,6 +20,7 @@ from aura.core.policy.stage_policy import allowed_next
 from aura.core.services import compliance
 from aura.core.services import walls as wall_service
 from aura.core.services.create_deal import create_deal
+from aura.core.services.deal_profile import update_deal_profile
 from aura.core.services.mandates import create_mandate
 from aura.core.services.parties import link_party
 from aura.core.services.transition_deal import preview_guards, transition_deal
@@ -32,7 +33,8 @@ def deal_out(d) -> DealOut:
                    transaction_class=d.transaction_class.value, owner=d.owner,
                    outcome=d.outcome.value if d.outcome else None,
                    opened_at=d.opened_at, closed_at=d.closed_at,
-                   regulatory_flags=list(d.regulatory_flags))
+                   regulatory_flags=list(d.regulatory_flags), profile=dict(d.profile),
+                   profile_schema_version=d.profile_schema_version)
 
 
 def _mandate_out(m) -> MandateOut:
@@ -65,7 +67,8 @@ def create(body: CreateDealRequest, user: User = Depends(current_user),
            deals=Depends(get_deals), history=Depends(get_history), audit=Depends(get_audit),
            walls=Depends(get_walls), users=Depends(get_users)):
     deal = create_deal(body.external_id, body.name, body.transaction_class, user.username,
-                       user.role, deals, history, audit, walls, users)
+                       user.role, deals, history, audit, walls, users,
+                       profile=body.profile, profile_schema_version=body.profile_schema_version)
     return deal_out(deal)
 
 
@@ -88,9 +91,16 @@ def get_deal(deal_id: int, user: User = Depends(current_user), deals=Depends(get
 def update_deal(deal_id: int, body: UpdateDealRequest, user: User = Depends(current_user),
                 deals=Depends(get_deals), audit=Depends(get_audit)):
     """Regulatory flags: dealmaker or compliance. Flags make T9 wait for a compliance
-    sign-off."""
-    return deal_out(compliance.set_regulatory_flags(deal_id, body.regulatory_flags,
-                                                    user.username, user.role, deals, audit))
+    sign-off. Profile (class-specific terms, whole object): dealmaker or analyst. When both
+    are given, both must succeed or neither is saved."""
+    deal = None
+    if body.regulatory_flags is not None:
+        deal = compliance.set_regulatory_flags(deal_id, body.regulatory_flags,
+                                               user.username, user.role, deals, audit)
+    if body.profile is not None:
+        deal = update_deal_profile(deal_id, body.profile, user.username, user.role, deals,
+                                   audit, body.profile_schema_version)
+    return deal_out(deal)
 
 
 @router.get("/{deal_id}/guards", response_model=list[EvaluationOut])

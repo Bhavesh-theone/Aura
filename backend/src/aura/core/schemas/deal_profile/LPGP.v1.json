@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:deal_profile/LPGP/v1",
+  "title": "LP/GP deal profile",
+  "description": "Terms of a fund commitment (Alternative Investment Fund).",
+  "x-transaction-class": "LPGP",
+  "x-schema-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "fund_name": {
+      "type": "string",
+      "maxLength": 200,
+      "title": "Fund",
+      "description": "Name of the fund."
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "lp",
+        "gp"
+      ],
+      "title": "Side",
+      "description": "Whether we act for the LP or the GP."
+    },
+    "fund_category": {
+      "type": "string",
+      "enum": [
+        "venture_capital",
+        "private_equity",
+        "private_credit",
+        "real_estate",
+        "infrastructure",
+        "special_situations",
+        "fund_of_funds",
+        "long_short"
+      ],
+      "title": "Fund strategy",
+      "description": "Investment strategy of the fund."
+    },
+    "sebi_aif_category": {
+      "type": "string",
+      "enum": [
+        "I",
+        "II",
+        "III"
+      ],
+      "title": "SEBI AIF category",
+      "description": "Category under SEBI (AIF) Regulations, 2012.",
+      "x-enum-labels": {
+        "I": "Category I",
+        "II": "Category II",
+        "III": "Category III"
+      }
+    },
+    "commitment_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Commitment",
+      "description": "Capital commitment by the LP. In Indian rupees (INR), not crore or lakh."
+    },
+    "target_corpus_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Target corpus",
+      "description": "Fund's target corpus. In Indian rupees (INR), not crore or lakh."
+    },
+    "management_fee_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "title": "Management fee (% p.a.)",
+      "description": "Annual management fee."
+    },
+    "carry_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 50,
+      "title": "Carried interest (%)",
+      "description": "GP carry."
+    },
+    "hurdle_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 50,
+      "title": "Hurdle (% IRR)",
+      "description": "Preferred return before carry."
+    },
+    "fund_term_years": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Fund term (years)",
+      "description": "Fund life from final close.",
+      "maximum": 25
+    },
+    "first_close": {
+      "type": "string",
+      "format": "date",
+      "title": "First close",
+      "description": "Date of first close. ISO 8601 date (YYYY-MM-DD)."
+    },
+    "gift_city": {
+      "type": "boolean",
+      "title": "GIFT City",
+      "description": "Fund is set up in GIFT City IFSC."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000,
+      "title": "Notes",
+      "description": "Free-text notes on the deal terms."
+    }
+  }
+}

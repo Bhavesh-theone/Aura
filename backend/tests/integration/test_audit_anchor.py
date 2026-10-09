@@ -8,20 +8,19 @@ from sqlalchemy.orm import Session
 
 from aura.config import BACKEND_DIR, get_settings
 from aura.core.domain.audit import AuditEntry
-from aura.data.engine import Base, make_engine
 from aura.data.repositories.sql import SqlAuditRepository
 from aura.data.verify_audit import (default_anchor_path, read_anchor, refresh_anchor, verify,
                                     write_anchor)
 from aura.data.walls import SYSTEM
+from tests.integration.pgtest import fresh_engine
 from tests.integration.conftest import PASSWORDS  # noqa: F401  (documents who exists)
 from tests.integration.helpers import (DIRECTIVE, link, make_deal, mark_executed, move, party,
-                                       run_worker, set_stage, submit, upload)
+                                       run_worker, set_stage, submit, tamper_audit, upload)
 
 
 @pytest.fixture()
 def session():
-    engine = make_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    engine = fresh_engine()
     with Session(engine) as s:
         yield s
 
@@ -32,11 +31,6 @@ def _append(session, n, start=0):
         repo.append(AuditEntry(id=None, job_id=None, actor="u", action=f"a{i}",
                                payload={"i": i}, created_at=datetime.now(timezone.utc)))
     session.commit()
-
-
-def _drop_triggers(session):
-    for t in ("no_update", "no_delete"):
-        session.execute(text(f"DROP TRIGGER trg_audit_entries_{t}"))
 
 
 # ------------------------------------------------------------------ the anchor file
@@ -71,9 +65,7 @@ def test_tail_deletion_is_caught_by_the_anchor_though_the_chain_still_verifies(s
     anchor = tmp_path / "a.json"
     _append(session, 4)
     refresh_anchor(session, anchor)
-    _drop_triggers(session)
-    session.execute(text("DELETE FROM audit_entries WHERE id = 4"))
-    session.commit()
+    tamper_audit(session, "DELETE FROM audit_entries WHERE id = 4")
     from aura.data.verify_audit import verify_chain
     assert verify_chain(session) is None  # the remaining chain is internally consistent
 
@@ -90,9 +82,7 @@ def test_deleting_everything_is_caught_too(session, tmp_path):
     anchor = tmp_path / "a.json"
     _append(session, 2)
     refresh_anchor(session, anchor)
-    _drop_triggers(session)
-    session.execute(text("DELETE FROM audit_entries"))
-    session.commit()
+    tamper_audit(session, "DELETE FROM audit_entries")
     result = verify(session, anchor)
     assert result.ok is False and result.broken_at == 1 and result.anchor.ok is False
 
@@ -101,10 +91,11 @@ def test_replacing_the_tail_with_new_rows_is_caught_by_the_hash(session, tmp_pat
     anchor = tmp_path / "a.json"
     _append(session, 3)
     refresh_anchor(session, anchor)
-    _drop_triggers(session)
-    session.execute(text("DELETE FROM audit_entries WHERE id = 3"))
-    session.commit()
-    _append(session, 1, start=99)  # ids are reused: a fresh row 3 with a different hash
+    # the attacker also winds the id sequence back, so the replacement reuses id 3
+    tamper_audit(session, "DELETE FROM audit_entries WHERE id = 3",
+                 "SELECT setval(pg_get_serial_sequence('audit_entries', 'id'), 2)")
+    _append(session, 1, start=99)  # a fresh row 3 with a different hash
+    assert session.execute(text("SELECT MAX(id) FROM audit_entries")).scalar() == 3
     result = verify(session, anchor)
     assert result.ok is False and result.anchor.ok is False and result.broken_at == 3
 
@@ -113,9 +104,7 @@ def test_editing_a_row_breaks_the_chain_at_that_row(session, tmp_path):
     anchor = tmp_path / "a.json"
     _append(session, 4)
     refresh_anchor(session, anchor)
-    _drop_triggers(session)
-    session.execute(text("UPDATE audit_entries SET actor = 'mallory' WHERE id = 2"))
-    session.commit()
+    tamper_audit(session, "UPDATE audit_entries SET actor = 'mallory' WHERE id = 2")
     result = verify(session, anchor)
     assert result.ok is False and result.broken_at == 2
 
@@ -151,14 +140,13 @@ def test_default_anchor_path_is_per_database(monkeypatch, tmp_path):
         get_settings.cache_clear()
         return default_anchor_path()
 
+    pg = "postgresql+psycopg://aura_app:pw@127.0.0.1:5433/"
     try:
-        assert cfg() == BACKEND_DIR / "data" / "audit_anchor.json"
-        db = (tmp_path / "scratch.db").as_posix()
-        scratch = cfg(AURA_DATABASE_URL=f"sqlite:///{db}")
-        assert scratch.as_posix() == db + ".audit_anchor.json"  # never the real anchor
-        assert cfg(AURA_DATABASE_URL="sqlite:///:memory:") is None
+        assert cfg(AURA_DATABASE_URL=pg + "aura") == BACKEND_DIR / "data" / "audit_anchor.json"
+        scratch = cfg(AURA_DATABASE_URL=pg + "aura_scratch")
+        assert scratch == BACKEND_DIR / "data" / "audit_anchor.aura_scratch.json"  # not aura's
         explicit = (tmp_path / "x.json").as_posix()
-        assert cfg(AURA_DATABASE_URL=f"sqlite:///{db}",
+        assert cfg(AURA_DATABASE_URL=pg + "aura_scratch",
                    AURA_AUDIT_ANCHOR_PATH=explicit).as_posix() == explicit
     finally:
         get_settings.cache_clear()
@@ -181,9 +169,7 @@ def test_verify_endpoint_shape_and_anchor_detection(api, tmp_path):
     assert ok["anchor"]["head_id"] == head[0] and ok["anchor"]["head_hash"] == head[1]
     assert ok["anchor"]["ok"] is True and ok["anchor"]["written_at"]
 
-    _drop_triggers(api.session)
-    api.session.execute(text("DELETE FROM audit_entries WHERE id = :i"), {"i": head[0]})
-    api.session.commit()
+    tamper_audit(api.session, "DELETE FROM audit_entries WHERE id = :i", params={"i": head[0]})
     bad = api.call("GET", "/api/audit/verify").json()
     assert bad["ok"] is False and bad["broken_at"] == head[0]
     assert bad["anchor"]["ok"] is False and bad["anchor"]["head_id"] == head[0]
@@ -300,7 +286,7 @@ def test_a_422_handoff_rejection_is_audited_and_survives_the_rollback(api):
     row = api.session.execute(text("SELECT actor, deal_id, payload FROM audit_entries WHERE "
                                    "action = 'handoff_rejected'")).one()
     assert row[0] == "bhavesh" and row[1] == deal
-    assert "decision_required" in json.loads(row[2])["reason"]
+    assert "decision_required" in row[2]["reason"]
     assert api.session.execute(text("SELECT COUNT(*) FROM handoff")).scalar() == 0
     assert api.session.execute(text("SELECT COUNT(*) FROM task")).scalar() == 0
     assert api.call("GET", "/api/audit/verify").json()["ok"] is True
@@ -315,7 +301,7 @@ def test_a_rejected_directive_is_audited_and_the_handoff_stays_open(api):
     assert r.status_code == 422
     row = api.session.execute(text("SELECT payload FROM audit_entries WHERE action = "
                                    "'handoff_rejected'")).scalar()
-    assert json.loads(row)["handoff_id"] == h["id"]
+    assert row["handoff_id"] == h["id"]
     assert api.call("GET", f"/api/handoffs/{h['id']}").json()["status"] == "open"
     bad = api.call("POST", f"/api/handoffs/{h['id']}/resolve",
                    json={**DIRECTIVE, "decision": "maybe"})

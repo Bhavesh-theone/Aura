@@ -13,7 +13,9 @@ def wall_usernames(deal_id: int) -> set[str]:
     """Usernames currently on the deal's wall: the only people who may hear about it."""
     from aura.data.engine import SessionLocal
     from aura.data.models.tables import UserRow, WallMemberRow, WallRow
+    from aura.data.walls import SYSTEM, bind_viewer
     with SessionLocal() as s:
+        bind_viewer(s, SYSTEM)  # reads the wall itself, across every deal (RLS)
         return set(s.scalars(
             select(UserRow.username)
             .join(WallMemberRow, WallMemberRow.user_id == UserRow.id)

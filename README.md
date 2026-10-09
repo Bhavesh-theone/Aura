@@ -184,7 +184,8 @@ The same screens in the dark theme: the Decisions inbox with an open handoff, an
 
 | Layer | Choice |
 |---|---|
-| Backend | Python 3.13, FastAPI, SQLAlchemy 2, SQLite, Alembic, uv |
+| Backend | Python 3.13, FastAPI, SQLAlchemy 2, Alembic, uv |
+| Database | PostgreSQL 16 + pgvector in a local Podman container (psycopg 3); deal walls also enforced by row-level security; JSONB deal profiles validated by JSON Schema |
 | Architecture | Hexagonal: `core/` (domain, policy, services) imports nothing from the outer layers; enforced by `lint-imports` |
 | Agents | CrewAI, local Ollama `qwen3.5:4b`, first-party MCP deals server; a deterministic stub runs when Ollama is down |
 | Frontend | Next.js, TypeScript, Radix primitives, lucide icons, self-hosted Inter / Newsreader / JetBrains Mono |
@@ -192,14 +193,20 @@ The same screens in the dark theme: the Decisions inbox with an open handoff, an
 
 ## Quick start
 
-Prerequisites: Python 3.13, [uv](https://docs.astral.sh/uv/), Node 18+, [Ollama](https://ollama.com).
+Prerequisites: Python 3.13, [uv](https://docs.astral.sh/uv/), Node 18+, [Ollama](https://ollama.com), [Podman](https://podman.io).
 
 ```bash
 ollama pull qwen3.5:4b
 
-# Backend — migrates and seeds the database on first start
+# Database — PostgreSQL 16 + pgvector on 127.0.0.1:5433 (from the repo root, PowerShell)
+podman machine start
+./scripts/db.ps1 up
+
+# Backend — migrates and seeds the database on start
 cd backend
 uv sync
+uv run alembic upgrade head                                 # optional: the API does this on start
+uv run python -m aura.data.migrate_sqlite --from aura.db    # optional, once: import an old SQLite aura.db
 uv run uvicorn aura.api.main:app --reload --port 8000
 
 # Frontend — in a second terminal
@@ -207,6 +214,8 @@ cd frontend
 npm install
 npm run dev
 ```
+
+Database passwords and URLs are in `backend/.env` (local development defaults; see `backend/.env.example` and [RUNNING.md](RUNNING.md#database-postgresql-16--pgvector)). Run the SQLite import before the first API start, or add `--force`.
 
 Open <http://localhost:3000>. The backend log should say `Orchestrator: CrewAI on http://localhost:11434`. If it says `StubOrchestrator`, Ollama isn't running: the app still works, but agents return canned output.
 
@@ -227,7 +236,7 @@ These are development credentials. Change them, and `AURA_JWT_SECRET` in `backen
 
 ```bash
 cd backend
-uv run pytest tests -q                       # full suite
+uv run pytest tests -q                       # full suite (needs the database container up)
 uv run lint-imports --config .importlinter   # layering rule
 uv run alembic check                         # models and migrations agree
 uv run python -m aura.data.verify_audit      # audit hash chain + anchor
@@ -251,8 +260,10 @@ Aura/
 │   │   ├── agents/      # CrewAI crews, recording LLM, gated tools
 │   │   ├── mcp/         # first-party deals MCP server
 │   │   └── worker/      # background job runner
-│   ├── migrations/      # Alembic revisions
+│   ├── migrations/      # Alembic: PostgreSQL baseline; old SQLite chain kept in sqlite_legacy/
 │   └── tests/           # unit + integration
+├── scripts/db.ps1       # the local PostgreSQL container
+├── infra/postgres/      # compose file and role/extension init script
 ├── frontend/
 │   ├── app/             # Next.js routes: dashboard, deals, decisions, activity, metrics, admin
 │   ├── features/        # per-feature API, hooks, components
@@ -275,7 +286,7 @@ Aura/
 
 v1 meets PRD-v1: 123 of 128 requirements are done and 5 are partial. One demo deal has been run from ORIGINATED to CLOSED through the UI with live agents.
 
-- **Single machine.** SQLite and a single worker. Deal walls are enforced in the application layer. Postgres with row-level security is the planned upgrade, needed before multiple concurrent users or real unpublished price-sensitive information (UPSI).
+- **Single machine.** One local PostgreSQL container and a single worker. Deal walls are enforced in the repositories and again by PostgreSQL row-level security. The app itself tells the database which user it acts for, so row-level security catches a missing filter or a buggy query, not compromised app code.
 - **Small local model.** `qwen3.5:4b` on CPU takes 30 seconds to 3 minutes per agent step and won't always produce a clean tool call. Every agent decision goes to a human, so a weak model costs speed, not correctness.
 - **Not production-hardened.** Development secrets and seeded passwords. The audit anchor is a local file, not write-once storage.
 - **Out of scope for v1:** matching, auctions, outbound channels, ledgers. See PRD-v1 §7.

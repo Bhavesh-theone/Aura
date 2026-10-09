@@ -30,12 +30,12 @@ from aura.data.models.tables import (ChecklistItemTemplateRow, ConditionPreceden
                                      DocumentRow, ExtractionRow, FindingRow, MandateCriteriaRow,
                                      MandateRow, PartyIdentifierRow, PartyRow, StageGuardRow,
                                      StageGuardEvaluationRow, UserRow, WallMemberRow, WallRow)
-from aura.data.walls import SYSTEM, Viewer, check_viewer, member_deal_ids, walled
+from aura.data.walls import SYSTEM, Viewer, bind_viewer, member_deal_ids, walled
 
 
 class SqlDealRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def _row(self, deal_id: int) -> DealRow | None:
         return self.s.scalars(walled(select(DealRow).where(DealRow.id == deal_id),
@@ -46,7 +46,9 @@ class SqlDealRepository:
                       transaction_class=deal.transaction_class.value, owner=deal.owner,
                       outcome=deal.outcome.value if deal.outcome else None,
                       opened_at=deal.opened_at, closed_at=deal.closed_at,
-                      regulatory_flags=list(deal.regulatory_flags))
+                      regulatory_flags=list(deal.regulatory_flags),
+                      profile=dict(deal.profile),
+                      profile_schema_version=deal.profile_schema_version)
         try:
             with self.s.begin_nested():
                 self.s.add(row)
@@ -73,6 +75,8 @@ class SqlDealRepository:
         row.outcome = deal.outcome.value if deal.outcome else None
         row.closed_at = deal.closed_at
         row.regulatory_flags = list(deal.regulatory_flags)
+        row.profile = dict(deal.profile)
+        row.profile_schema_version = deal.profile_schema_version
         self.s.flush()
         self.s.refresh(row)
         return mappers.deal_to_domain(row)
@@ -87,7 +91,7 @@ class SqlStageHistoryRepository:
     """Append-only by design; the table also has triggers rejecting UPDATE and DELETE."""
 
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def append(self, entry: StageHistoryEntry) -> StageHistoryEntry:
         row = DealStageHistoryRow(
@@ -176,7 +180,7 @@ class SqlPartyRepository:
     """Parties are firm-wide; only their links to deals are walled."""
 
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def _identifiers(self, party_id: int) -> list[PartyIdentifierRow]:
         return list(self.s.scalars(select(PartyIdentifierRow)
@@ -237,7 +241,7 @@ class SqlPartyRepository:
 
 class SqlMandateRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def _to_domain(self, row: MandateRow) -> Mandate:
         crit = self.s.scalars(select(MandateCriteriaRow)
@@ -274,7 +278,7 @@ class SqlMandateRepository:
 
 class SqlDocumentRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def _row(self, document_id: int) -> DocumentRow | None:
         return self.s.scalars(walled(select(DocumentRow).where(DocumentRow.id == document_id),
@@ -364,7 +368,7 @@ class SqlDocumentRepository:
 
 class SqlDiligenceRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def _row(self, item_id: int) -> DiligenceItemRow | None:
         return self.s.scalars(walled(select(DiligenceItemRow)
@@ -426,7 +430,7 @@ class SqlDiligenceRepository:
 
 class SqlConditionRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def _row(self, cp_id: int) -> ConditionPrecedentRow | None:
         return self.s.scalars(walled(select(ConditionPrecedentRow)
@@ -466,7 +470,7 @@ class SqlConditionRepository:
 
 class SqlWallRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def _user_id(self, username: str) -> int:
         user_id = self.s.scalar(select(UserRow.id).where(UserRow.username == username))
@@ -528,7 +532,7 @@ class SqlWallRepository:
 
 class SqlFindingRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def add(self, finding: Finding) -> Finding:
         row = FindingRow(diligence_item_id=finding.diligence_item_id,
@@ -555,7 +559,7 @@ class SqlExtractionRepository:
     """Extractions hang off documents, so the document's deal decides who may see them."""
 
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def _row(self, extraction_id: int) -> ExtractionRow | None:
         stmt = (select(ExtractionRow)
@@ -602,7 +606,7 @@ class SqlExtractionRepository:
 
 class SqlSignoffRepository:
     def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, check_viewer(viewer)
+        self.s, self.viewer = session, bind_viewer(session, viewer)
 
     def add(self, signoff: DealSignoff) -> DealSignoff:
         row = DealSignoffRow(deal_id=signoff.deal_id, signed_by=signoff.signed_by,
