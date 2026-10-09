@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 
 from aura.core.domain.errors import (Conflict, Forbidden, GuardBlocked, InvalidTransition,
                                      NotFound, RateLimited, RuleViolation)
+from aura.core.domain.ingest import CorruptDocument, DocumentTooLarge, UnsupportedFormat
 
 
 def evaluation_out(ev) -> dict:
@@ -22,6 +23,10 @@ def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(Conflict, simple(409))
     app.add_exception_handler(RuleViolation, simple(422))
     app.add_exception_handler(Forbidden, simple(403))
+    # Ingestion (more specific than RuleViolation/DomainError, so these win).
+    app.add_exception_handler(UnsupportedFormat, simple(415))
+    app.add_exception_handler(DocumentTooLarge, simple(413))
+    app.add_exception_handler(CorruptDocument, simple(422))
 
     def blocked(_: Request, exc: Exception) -> JSONResponse:
         evaluations = [evaluation_out(e) for e in getattr(exc, "evaluations", [])]

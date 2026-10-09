@@ -305,6 +305,118 @@ Restart the backend after changing it. **Settings › Integrations** in the port
 
 **Hygiene.** If `client_secret.json` was ever shared or pasted anywhere, reset the client secret in the Cloud console (*Credentials → your Desktop client → Reset secret*), download the new JSON, replace the file and reconnect.
 
+### Documents: formats, indexing and search
+
+Every uploaded document is parsed, chunked, embedded locally and stored in `doc_chunk`
+(PostgreSQL + pgvector), so it can be searched and retrieved for the agents. Nothing leaves
+the machine: parsing is in-process, OCR uses local ONNX models, embeddings come from your
+Ollama.
+
+**Supported formats** (upload is refused with **415** otherwise, **413** over the size limit):
+
+| Format | Library | What is kept |
+| --- | --- | --- |
+| PDF | PyMuPDF | text per page; larger-font single lines become headings. A page with (almost) no text layer is **OCR'd** with RapidOCR (`rapidocr_onnxruntime`, models ship in the wheel, works offline) and marked in the warnings |
+| DOCX | python-docx | paragraphs, `Heading`/`Title` styles as headings, tables (rows and cells) in document order |
+| XLSX / XLSM | openpyxl | each sheet's used range as a table, header row kept (`Sheet: <name>` heading); empty sheets are reported |
+| CSV | csv | one table |
+| PPTX | python-pptx | per slide (= page): title, text boxes, tables, speaker notes |
+| EML | stdlib `email` | headers, plain or HTML body (converted to text), attachments listed **and parsed** when supported (two levels deep) |
+| MSG | extract-msg | as EML |
+| TXT / MD | — | paragraphs; Markdown `#` lines are headings |
+
+The type comes from the extension and is checked against the magic bytes. A file named `.pdf`
+(or `.docx` ...) that is really plain text is read as text with a warning (many demo
+placeholders are). A damaged, encrypted or mislabelled file fails **its own** indexing with a
+clear error (`index_status: failed`); it never stops the worker. `GET /api/document-formats`
+returns the accepted extensions and the limit (the upload dialog shows them).
+
+**Limits** (`backend/.env`): `AURA_MAX_UPLOAD_MB` (25), `AURA_MAX_PAGES` (300 pages or slides),
+`AURA_OCR_ENABLED` (true), `AURA_OCR_MAX_PAGES` (50 OCR'd pages per document; later image pages
+are reported, not read), `AURA_OCR_MIN_CHARS` (25: a page with fewer extractable characters is
+treated as an image). OCR takes about 1-3 s a page on this machine.
+
+**Indexing.** Upload (and every new version, and **Reindex**) queues the document in
+`index_job` (one row per document) and marks it `pending`. A worker thread in the API process
+(next to the agent worker, so a long OCR never delays agent jobs) claims jobs with `FOR UPDATE
+SKIP LOCKED` and runs: load -> parse -> chunk -> prompt-injection screen -> embed -> replace the
+document's chunks in one transaction -> `indexed` (+ `indexed_at`, `chunk_count`, `ocr_used`,
+`page_count`, `warnings`).
+
+- Chunking is structure-aware and deterministic: a heading starts a chunk; text windows of
+  about `AURA_CHUNK_TARGET_TOKENS` (800, at 4 characters a token) with
+  `AURA_CHUNK_OVERLAP_TOKENS` (100) overlap; tables are split by whole rows with the header
+  repeated, never mid-row; each chunk keeps `page_from`/`page_to` and `kind` (text|table).
+- Screening: every chunk is scored by the injection rules; the text is **kept** and the score
+  and matched rules are stored in `doc_chunk.meta` (the document's warnings count flagged
+  chunks). Context assembly screens and wraps it again before a model sees it.
+- Embeddings: `nomic-embed-text` through Ollama `POST /api/embed` with the nomic task prefixes
+  (`search_document: ` / `search_query: `), batches of `AURA_EMBED_BATCH` (16), retries on
+  connection errors and 5xx, a 768-dimension check, and the model name on every chunk. Pull it
+  once: `ollama pull nomic-embed-text`. `AURA_EMBEDDER=fake` uses deterministic hash vectors
+  instead (tests; machines without Ollama).
+- Lineage: one `embed_run` row per batch (model, batch size, characters, latency, status,
+  trace) plus `index.document` / `embed.batch` spans in the upload's trace. Embeddings are
+  **not** `agent_run` rows: those count against the daily model budget and the autonomy
+  metrics, which embedding is not part of.
+- Reliability: the same `RetryPolicy` as agent segments. A transient failure (Ollama down,
+  timeout) is retried with backoff (`AURA_INDEX_MAX_ATTEMPTS` 3, `AURA_INDEX_BACKOFF_SECONDS`
+  15) and then dead-lettered; a permanent one (corrupt, unsupported, too many pages) fails at
+  once; a claim older than `AURA_INDEX_LEASE_SECONDS` is recovered. Failed documents show
+  **Failed** with the reason; **Reindex** (dealmaker or analyst,
+  `POST /api/documents/{id}/reindex`) queues them again. A version uploaded while its previous
+  one is being indexed supersedes it (the running job's writes are rolled back).
+- Audit: `document_indexed`, `document_index_failed`, `index_retry_scheduled`,
+  `document_reindex_requested`; the document events also refresh the Documents tab live.
+
+**Backfill** documents uploaded before this existed (or failed ones):
+
+```bash
+cd backend
+uv run python -m aura.ingest.backfill                 # every document not yet indexed
+uv run python -m aura.ingest.backfill --deal 3 --limit 20
+uv run python -m aura.ingest.backfill --all           # re-index everything
+uv run python -m aura.ingest.backfill --queue-only    # just queue; the running API does it
+```
+
+**Search.** `GET /api/deals/{id}/search?q=...&k=8` (k up to 50) runs as the caller under
+row-level security (a deal off your wall is a 404; another deal's chunks are never returned):
+
+- vector: the query embedded with `search_query: `, nearest chunks by cosine distance
+  (pgvector `<=>`, HNSW, `AURA_HNSW_EF_SEARCH` 80 with iterative scans so the deal filter
+  still fills the list);
+- full text: `websearch_to_tsquery('english', q)` over the chunk's `tsv`; chunks matching every
+  term first, then any term, each by `ts_rank_cd`; snippet by `ts_headline`;
+- fused with **Reciprocal Rank Fusion** (`AURA_RRF_K` 60) over the top `AURA_SEARCH_CANDIDATES`
+  (40) of each list; ties by chunk id. If Ollama is down the search answers from full text only
+  (`mode: "fts_only"`, with a warning) rather than failing.
+
+```json
+{"query": "CCI approval", "k": 8, "mode": "hybrid", "embedding_model": "nomic-embed-text",
+ "took_ms": 41, "warnings": [],
+ "results": [{"rank": 1, "chunk_id": 812, "document_id": 57, "filename": "spa_draft.docx",
+   "version": 2, "chunk_index": 3, "page_from": null, "page_to": null, "kind": "text",
+   "snippet": "Completion is conditional on approval of the Competition Commission of India (⟦CCI⟧ ⟦approval⟧) ...",
+   "text": "3. Conditions precedent ...", "score": 0.032787,
+   "scores": {"rrf": 0.032787, "vector_rank": 1, "vector_distance": 0.31, "fts_rank": 1, "fts_score": 1.4}}]}
+```
+
+The snippet is plain text with matches between `⟦` and `⟧` (render it as text, not HTML).
+`GET /api/documents/{id}/chunks?offset=&limit=` pages through a document's chunks (with their
+screening score). In the app: **Deal › Documents › Search this deal**.
+
+**Agents use it too.** Context assembly for `classify_document` and `draft_email` now
+retrieves related passages with this hybrid search (as the job's user), with page ranges in
+the citations; documents not indexed yet fall back to the old keyword (BM25) ranking. An
+indexed subject document's excerpt is its parsed text (no more raw PDF bytes).
+
+**Retrieval quality.** `uv run python -m aura.evals.run --capability retrieval` indexes the
+fixture deal pack (`backend/tests/fixtures/ingest`, a fictional acquisition: PDF with a scanned
+page, DOCX, XLSX, PPTX, EML with a CSV attachment, Markdown, CSV) inside a transaction that is
+rolled back, runs the 16 queries of `evals/golden/retrieval.jsonl` and reports recall@5 and MRR
+(stored as an `eval_run`, threshold `AURA_EVAL_THRESHOLD_RETRIEVAL` 0.8). It uses Ollama when
+`nomic-embed-text` answers (`--embedder fake|ollama` to force).
+
 ### Retries, dead letters and recovery
 
 The worker claims a segment with `SELECT ... FOR UPDATE SKIP LOCKED` on the oldest runnable queued segment, so two workers can never run the same segment and neither waits for the other. Each claim stamps `claimed_by`, `claimed_at` and counts an attempt.

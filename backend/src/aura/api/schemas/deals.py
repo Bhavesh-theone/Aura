@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from aura.api.schemas.harness import EvaluationMetricsOut, SecurityMetricsOut
 from aura.api.schemas.outbound import OutboundMetricsOut
@@ -143,6 +143,73 @@ class DocumentOut(BaseModel):
     class_confirmed: bool
     uploaded_by: str
     uploaded_at: datetime
+    # Indexing (phase 2): pending until parsed, chunked and embedded; failed with a reason.
+    index_status: Literal["pending", "indexed", "failed"] = "pending"
+    indexed_at: datetime | None = None
+    chunk_count: int = 0
+    ocr_used: bool = False
+    page_count: int | None = None
+    warnings: list[str] = []
+    index_error: str | None = None
+
+
+class ChunkOut(BaseModel):
+    chunk_index: int
+    kind: str
+    page_from: int | None
+    page_to: int | None
+    text: str
+    embedding_model: str | None
+    risk_score: float
+    matched_rules: list[str]
+
+
+class ChunkPageOut(BaseModel):
+    document_id: int
+    version: int
+    total: int
+    items: list[ChunkOut]
+
+
+class DocumentFormatsOut(BaseModel):
+    extensions: list[str]
+    accept: str
+    max_upload_mb: int
+    ocr_enabled: bool
+
+
+class SearchScoresOut(BaseModel):
+    rrf: float
+    vector_rank: int | None
+    vector_distance: float | None
+    fts_rank: int | None
+    fts_score: float | None
+
+
+class SearchHitOut(BaseModel):
+    rank: int
+    chunk_id: int
+    document_id: int
+    filename: str
+    version: int
+    chunk_index: int
+    page_from: int | None
+    page_to: int | None
+    kind: str
+    snippet: str
+    text: str
+    score: float
+    scores: SearchScoresOut
+
+
+class SearchOut(BaseModel):
+    query: str
+    k: int
+    mode: Literal["hybrid", "fts_only"]
+    embedding_model: str | None
+    took_ms: int
+    warnings: list[str]
+    results: list[SearchHitOut]
 
 
 class DiligenceItemOut(BaseModel):

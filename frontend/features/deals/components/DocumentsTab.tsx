@@ -3,24 +3,118 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import * as Popover from "@radix-ui/react-popover";
 import {
-  BadgeCheck, CircleDashed, Download, FileSignature, FileText, History, Lock, MoreHorizontal, ScanText, Sparkles, Upload,
+  AlertTriangle, BadgeCheck, CircleDashed, Download, FileSignature, FileText, History, Lock, MoreHorizontal, RotateCw, ScanText,
+  Sparkles, Upload,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { WHO_CAN } from "@/features/auth/roles";
 import { useCan } from "@/features/auth/useCan";
+import { ApiError } from "@/shared/api/client";
 import { dealEvents } from "@/shared/api/events";
 import { cx, formatDateTime, humanize, shortDate, titleCase } from "@/shared/lib/format";
 import { errMessage, useApi } from "@/shared/lib/useApi";
-import { Badge, Button, IconButton, Segmented, Tip } from "@/shared/ui/primitives";
+import { Badge, Button, Dot, IconButton, Segmented, Tip } from "@/shared/ui/primitives";
 import { Permit } from "@/shared/ui/Permit";
 import { Sheet } from "@/shared/ui/Sheet";
 import { useToast } from "@/shared/ui/toast";
 import {
-  downloadDocument, getDocument, listDocumentVersions, listDocuments, patchDocument, uploadDocumentWithProgress,
+  downloadDocument, getDocument, getDocumentFormats, listDocumentVersions, listDocuments, patchDocument, reindexDocument,
+  uploadDocumentWithProgress,
 } from "../api";
-import { DOC_CLASSES, SENSITIVITY, type DealDocument, type DocumentVersion } from "../types";
+import {
+  DOC_CLASSES, FALLBACK_FORMATS, SENSITIVITY, type DealDocument, type DocumentFormats, type DocumentVersion, type SearchHit,
+} from "../types";
 import { useRunAgent } from "./AgentActions";
+import { DealSearchBox, DealSearchResults } from "./DocumentSearch";
 import { EmptyState, InlineError, Notice, Section, SkeletonRows, Unavailable, labelCls, selectCls } from "./ui";
+
+/** While any document is still indexing, refetch at this cadence as a fallback to the socket. */
+const PENDING_POLL_MS = 5000;
+
+const fileExt = (name: string) => {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i).toLowerCase() : "";
+};
+
+/** Upload failures with a clearer lead-in for the two the server rejects by content. */
+function uploadError(err: unknown, formats: DocumentFormats) {
+  const msg = errMessage(err);
+  if (err instanceof ApiError && err.status === 415) {
+    return `Unsupported file type. ${msg} Allowed: ${formats.extensions.join(", ")}.`;
+  }
+  if (err instanceof ApiError && err.status === 413) {
+    return `File too large. ${msg} The limit is ${formats.max_upload_mb} MB.`;
+  }
+  return msg;
+}
+
+/* ------------------------------- Index status ------------------------------ */
+
+function TipLines({ title, lines }: { title?: string | null; lines: string[] }) {
+  return (
+    <div className="max-w-xs py-0.5 text-[12px] leading-relaxed">
+      {title ? <p className="font-medium">{title}</p> : null}
+      {lines.length ? (
+        <ul className={cx("list-disc pl-4 text-fg-2", title && "mt-1")}>
+          {lines.map((w, i) => (
+            <li key={i}>{w}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** Pending / Indexed / Failed, plus OCR and parse-warning markers. Nothing on an older server. */
+function IndexState({ doc, allowed, reindexing, onReindex }: { doc: DealDocument; allowed: boolean; reindexing: boolean; onReindex: () => void }) {
+  const warnings = doc.warnings ?? [];
+  const s = doc.index_status;
+  if (!s) return null;
+  return (
+    <>
+      {s === "pending" ? (
+        <Tip label="Parsing and indexing — search will include it shortly">
+          <span tabIndex={0} className="outline-none">
+            <Badge tone="info"><Dot tone="info" pulse /> Pending</Badge>
+          </span>
+        </Tip>
+      ) : s === "indexed" ? (
+        <Tip label={doc.indexed_at ? `Indexed ${formatDateTime(doc.indexed_at)}` : "Indexed for search"}>
+          <span tabIndex={0} className="outline-none">
+            <Badge tone="success">Indexed</Badge>
+          </span>
+        </Tip>
+      ) : (
+        <>
+          <Tip label={<TipLines title={doc.index_error || "Indexing failed"} lines={warnings} />}>
+            <span tabIndex={0} className="outline-none">
+              <Badge tone="danger"><AlertTriangle className="h-3 w-3" /> Failed</Badge>
+            </span>
+          </Tip>
+          <Permit allow={allowed} why={WHO_CAN.work}>
+            <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" loading={reindexing} onClick={onReindex}>
+              {reindexing ? null : <RotateCw className="h-3 w-3" />} Reindex
+            </Button>
+          </Permit>
+        </>
+      )}
+      {s !== "failed" && warnings.length ? (
+        <Tip label={<TipLines title={`${warnings.length} parse warning${warnings.length === 1 ? "" : "s"}`} lines={warnings} />}>
+          <span tabIndex={0} aria-label={`${warnings.length} parse warnings`} className="inline-flex text-warning outline-none">
+            <AlertTriangle className="h-3.5 w-3.5" />
+          </span>
+        </Tip>
+      ) : null}
+      {doc.ocr_used ? (
+        <Tip label="Some text was recovered with OCR — check figures against the original">
+          <span tabIndex={0} className="outline-none">
+            <Badge mono>OCR</Badge>
+          </span>
+        </Tip>
+      ) : null}
+    </>
+  );
+}
 
 export function formatBytes(n?: number | null) {
   if (n == null) return "";
@@ -194,6 +288,25 @@ function UploadSheet({ dealId, open, onClose, onUploaded }: { dealId: number; op
   const [pct, setPct] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const effective = upsi ? "4" : sensitivity;
+  const served = useApi<DocumentFormats | null>(open ? getDocumentFormats : null, null, [open]);
+  const formats = served.data ?? FALLBACK_FORMATS;
+  const maxBytes = formats.max_upload_mb * 1024 * 1024;
+
+  /** Reject what the server would refuse anyway (415 / 413) before sending a byte. */
+  function pick(f: File | null) {
+    setError(null);
+    if (f && formats.extensions.length && !formats.extensions.includes(fileExt(f.name))) {
+      setFile(null);
+      setError(`${f.name} isn’t a supported type. Allowed: ${formats.extensions.join(", ")}.`);
+      return;
+    }
+    if (f && f.size > maxBytes) {
+      setFile(null);
+      setError(`${f.name} is ${formatBytes(f.size)} — the limit is ${formats.max_upload_mb} MB.`);
+      return;
+    }
+    setFile(f);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -207,14 +320,14 @@ function UploadSheet({ dealId, open, onClose, onUploaded }: { dealId: number; op
       form.append("contains_upsi", String(upsi));
       form.append("sensitivity", effective);
       await uploadDocumentWithProgress(dealId, form, setPct);
-      toast(`${file.name} uploaded`);
+      toast(`${file.name} uploaded — indexing for search`);
       setFile(null);
       setUpsi(false);
       setSensitivity("2");
       onUploaded();
       onClose();
     } catch (err) {
-      setError(errMessage(err));
+      setError(uploadError(err, formats));
     } finally {
       setPct(null);
     }
@@ -246,7 +359,7 @@ function UploadSheet({ dealId, open, onClose, onUploaded }: { dealId: number; op
             e.preventDefault();
             setDrag(false);
             const f = e.dataTransfer.files?.[0];
-            if (f) setFile(f);
+            if (f) pick(f);
           }}
           className={cx(
             "flex cursor-pointer flex-col items-center gap-1.5 rounded-md border border-dashed px-4 py-8 text-center transition-colors focus-within:ring-2 focus-within:ring-accent/40",
@@ -255,9 +368,21 @@ function UploadSheet({ dealId, open, onClose, onUploaded }: { dealId: number; op
         >
           <Upload className="h-4 w-4 text-muted" />
           <span className="max-w-full truncate text-[13px] font-medium text-fg">{file ? file.name : "Drop a file, or browse"}</span>
-          <span className="text-[12px] text-muted">{file ? formatBytes(file.size) : "PDF, XLSX, DOCX"}</span>
-          <input type="file" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          <span className="text-[12px] text-muted">{file ? formatBytes(file.size) : `Up to ${formats.max_upload_mb} MB`}</span>
+          <input
+            type="file"
+            accept={formats.accept || formats.extensions.join(",")}
+            className="sr-only"
+            onChange={(e) => {
+              pick(e.target.files?.[0] ?? null);
+              e.target.value = "";
+            }}
+          />
         </label>
+        <p className="-mt-3 text-[12px] leading-relaxed text-muted">
+          Accepted: <span className="font-mono text-[11px] text-fg-2">{formats.extensions.map((x) => x.replace(/^\./, "").toUpperCase()).join(" · ")}</span>
+          {" "}· max {formats.max_upload_mb} MB{formats.ocr_enabled ? " · scanned PDFs are read with OCR" : ""}.
+        </p>
 
         {pct !== null ? (
           <div role="progressbar" aria-label="Upload progress" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} className="h-1 overflow-hidden rounded-full bg-control-active">
@@ -313,6 +438,38 @@ export function DocumentsTab({ dealId }: { dealId: number }) {
   const [uploading, setUploading] = useState(false);
   const [versionsOf, setVersionsOf] = useState<DealDocument | null>(null);
   const [toggling, setToggling] = useState<number | null>(null);
+  const [reindexing, setReindexing] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
+  const [searchKey, setSearchKey] = useState(0);
+  const anyPending = docs.data.some((d) => d.index_status === "pending");
+
+  // The socket refreshes on `entity_changed` (kind "document"); this is the belt to its braces.
+  useEffect(() => {
+    if (!anyPending) return;
+    const id = setInterval(docs.refresh, PENDING_POLL_MS);
+    return () => clearInterval(id);
+  }, [anyPending, docs.refresh]);
+
+  async function reindex(d: DealDocument) {
+    setReindexing(d.id);
+    try {
+      await reindexDocument(d.id);
+      toast(`Reindexing ${d.filename ?? `document ${d.id}`}`);
+      docs.refresh();
+    } catch (err) {
+      toast(errMessage(err), "error");
+    } finally {
+      setReindexing(null);
+    }
+  }
+
+  /** "Open document" from a search hit: the details drawer when listed, else a (logged) download. */
+  function openHit(hit: SearchHit) {
+    const d = docs.data.find((x) => x.id === hit.document_id);
+    if (d) setVersionsOf(d);
+    else
+      downloadDocument(hit.document_id, hit.filename ?? `document-${hit.document_id}`).catch((err) => toast(errMessage(err), "error"));
+  }
 
   async function download(d: DealDocument) {
     try {
@@ -345,6 +502,12 @@ export function DocumentsTab({ dealId }: { dealId: number }) {
 
   return (
     <>
+      <DealSearchResults dealId={dealId} query={query} onOpen={openHit}
+        onClear={() => {
+          setQuery("");
+          setSearchKey((k) => k + 1); // remount the box so its text clears too
+        }}
+      />
       <Section
         title={
           <span className="flex items-center gap-2">
@@ -352,7 +515,12 @@ export function DocumentsTab({ dealId }: { dealId: number }) {
           </span>
         }
         flush
-        aside={uploadButton}
+        aside={
+          <>
+            <DealSearchBox key={searchKey} onQuery={setQuery} />
+            {uploadButton}
+          </>
+        }
       >
         {docs.unavailable ? (
           <div className="p-4"><Unavailable what="Documents" /></div>
@@ -400,10 +568,15 @@ export function DocumentsTab({ dealId }: { dealId: number }) {
                       <span className="num font-mono">{formatBytes(d.byte_size)}</span>
                       <span>· {titleCase(d.uploaded_by)}</span>
                       <span className="num" title={formatDateTime(d.uploaded_at)}>· {shortDate(d.uploaded_at)}</span>
+                      {d.index_status === "indexed" && d.chunk_count != null ? (
+                        <span className="num">· {d.chunk_count} {d.chunk_count === 1 ? "chunk" : "chunks"}</span>
+                      ) : null}
+                      {d.page_count ? <span className="num">· {d.page_count} {d.page_count === 1 ? "page" : "pages"}</span> : null}
                     </div>
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1.5">
+                    <IndexState doc={d} allowed={allowed} reindexing={reindexing === d.id} onReindex={() => void reindex(d)} />
                     {d.contains_upsi ? (
                       <Tip label="Unpublished price-sensitive information · views and downloads are logged">
                         <span tabIndex={0} className="outline-none">
@@ -448,6 +621,13 @@ export function DocumentsTab({ dealId }: { dealId: number }) {
                         <Menu.Content align="end" sideOffset={4} className="a-pop z-50 w-60 rounded-md bg-raised p-1 shadow-overlay">
                           <Menu.Item className={menuItem} onSelect={() => setVersionsOf(d)}>
                             <History className="h-4 w-4 text-muted" /> Version history
+                          </Menu.Item>
+                          <Menu.Item
+                            className={menuItem}
+                            disabled={!allowed || reindexing !== null || d.index_status === "pending"}
+                            onSelect={() => void reindex(d)}
+                          >
+                            <RotateCw className="h-4 w-4 text-muted" /> Reindex for search
                           </Menu.Item>
                           <Menu.Separator className="my-1 h-px bg-line-subtle" />
                           <Menu.Label className="px-2 pb-1 pt-1.5 text-[11px] font-medium text-muted">

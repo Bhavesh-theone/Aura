@@ -3,14 +3,18 @@
 - The subject document's text is read through the job user's wall-scoped repositories, both
   at submit and again when the segment runs (assemble_context), so a wall change after submit
   applies: a document the user can no longer see fails the segment instead of leaking.
-- Retrieval: for classify_document and draft_email, the deal's other documents are chunked and
-  ranked with BM25 (aura.core.services.retrieval); the best chunks ride along with citations.
+- Retrieval: for classify_document and draft_email, the deal's other documents are searched
+  with hybrid search (aura.core.services.search: pgvector cosine + Postgres full text, fused
+  by Reciprocal Rank Fusion) under the job user's row-level security; documents whose index
+  is not ready yet fall back to stdlib BM25 (aura.core.services.retrieval). The best chunks
+  ride along with citations (document, chunk and page range).
 - Every piece of document text is screened for prompt injection and wrapped as untrusted data
   (aura.core.policy.injection_policy); the screening record goes into the context.
 - Compaction: the whole block is capped at max_chars. The least relevant retrieved chunks are
   dropped first, then the excerpt is truncated; what was dropped is recorded.
 """
 from dataclasses import dataclass
+from typing import Callable
 
 from aura.core.domain.errors import NotFound
 from aura.core.policy.injection_policy import DEFAULT_THRESHOLD, screen_and_wrap, summarise
@@ -68,6 +72,10 @@ def compose(context: dict, raw_excerpt: str | None, related: list[Chunk],
             c.text, f"document {c.document_id} ({c.filename}), chunk {c.index}")
         item = {"document_id": c.document_id, "filename": c.filename, "chunk": c.index,
                 "score": c.score}
+        if c.page_from is not None:
+            item["pages"] = [c.page_from, c.page_to]
+        if c.source != "bm25":
+            item["source"] = c.source
         if len(wrapped) <= budget:
             budget -= len(wrapped)
             kept.append({**item, "text": wrapped})
@@ -84,9 +92,38 @@ def compose(context: dict, raw_excerpt: str | None, related: list[Chunk],
     return out
 
 
+# (deal_id, query, k) -> chunks, best first; run as the job's user (row-level security).
+Searcher = Callable[[int, str, int], list[Chunk]]
+
+
+def _related(query: str, deal_id: int, subject_id, documents: DocumentRepository,
+             store: FileStore, limits: ContextLimits, search: Searcher | None) -> list[Chunk]:
+    """Hybrid hits on indexed documents first, then BM25 over documents not indexed yet."""
+    docs = sorted(documents.list_for_deal(deal_id), key=lambda d: d.id)
+    found: list[Chunk] = []
+    if search is not None:
+        try:
+            hits = search(deal_id, query, limits.retrieval_top_k + 4)
+        except Exception:  # retrieval is an aid: a search failure must not fail the job
+            hits = []
+        found = [c for c in hits if c.document_id != subject_id][:limits.retrieval_top_k]
+    pending = [d for d in docs if d.id != subject_id
+               and (search is None or getattr(d, "index_status", "pending") != "indexed")]
+    left = limits.retrieval_top_k - len(found)
+    if left > 0 and pending:
+        corpus: list[Chunk] = []
+        for d in pending:
+            corpus += chunk(d.id, d.filename,
+                            store.read_head(d.sha256, limits.retrieval_doc_chars))
+        found += bm25(query, corpus, left)
+    return found
+
+
 def assemble_context(context: dict, documents: DocumentRepository | None,
                      store: FileStore | None,
-                     limits: ContextLimits = ContextLimits()) -> dict:
+                     limits: ContextLimits = ContextLimits(),
+                     search: Searcher | None = None,
+                     indexed_text: Callable[[int], str | None] | None = None) -> dict:
     """Re-read the subject document and the related chunks through `documents` (built for the
     job's user) and compose the context. Contexts with no capability pass through."""
     capability = context.get("capability")
@@ -103,19 +140,20 @@ def assemble_context(context: dict, documents: DocumentRepository | None,
         if doc is None or doc.deal_id != deal_id:
             raise NotFound("The document is not on this deal or is no longer visible to the "
                            "job's user")
-        raw = store.read_head(doc.sha256, limits.excerpt_chars) if store else ""
+        # An indexed document's parsed text (PDF, DOCX, ... read properly); otherwise the
+        # file's head, decoded leniently.
+        indexed = indexed_text is not None and getattr(doc, "index_status", None) == "indexed"
+        raw = indexed_text(doc.id) if indexed else None
+        if not raw:
+            raw = store.read_head(doc.sha256, limits.excerpt_chars) if store else ""
         out["document"] = {**(context.get("document") or {}), "id": doc.id,
                            "filename": doc.filename, "current_class": doc.doc_class.value,
                            "version": doc.current_version}
     related: list[Chunk] = []
     if capability in RETRIEVAL_CAPABILITIES and documents is not None and store is not None \
             and isinstance(deal_id, int) and limits.retrieval_top_k > 0:
-        corpus: list[Chunk] = []
-        for d in sorted(documents.list_for_deal(deal_id), key=lambda d: d.id):
-            if d.id != subject_id:
-                corpus += chunk(d.id, d.filename,
-                                store.read_head(d.sha256, limits.retrieval_doc_chars))
-        related = bm25(_query(out, raw or ""), corpus, limits.retrieval_top_k)
+        related = _related(_query(out, raw or ""), deal_id, subject_id, documents, store,
+                           limits, search)
         out.setdefault("related", [])
     return compose(out, raw, related, limits)
 

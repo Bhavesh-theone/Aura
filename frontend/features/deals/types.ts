@@ -96,6 +96,58 @@ export type DealDocument = {
   class_confirmed: boolean;
   uploaded_by: string;
   uploaded_at: string;
+  /* Indexing (parse → chunk → embed). Optional so an older server still renders. */
+  index_status?: IndexStatus;
+  indexed_at?: string | null;
+  chunk_count?: number;
+  ocr_used?: boolean;
+  page_count?: number | null;
+  /** Parse warnings, e.g. "page 3: OCR used". */
+  warnings?: string[];
+  /** Why indexing failed. */
+  index_error?: string | null;
+};
+
+export type IndexStatus = "pending" | "indexed" | "failed";
+
+/** GET /api/document-formats — what the upload endpoint accepts. */
+export type DocumentFormats = { extensions: string[]; accept: string; max_upload_mb: number; ocr_enabled: boolean };
+
+/** Used until (or if) the server's own list arrives. */
+export const FALLBACK_FORMATS: DocumentFormats = {
+  extensions: [".pdf", ".docx", ".xlsx", ".xlsm", ".csv", ".pptx", ".eml", ".msg", ".txt", ".md", ".markdown"],
+  accept: ".pdf,.docx,.xlsx,.xlsm,.csv,.pptx,.eml,.msg,.txt,.md,.markdown",
+  max_upload_mb: 25,
+  ocr_enabled: true,
+};
+
+/** One ranked passage from GET /api/deals/{id}/search. */
+export type SearchHit = {
+  rank: number;
+  chunk_id: number;
+  document_id: number;
+  filename: string;
+  version: number;
+  chunk_index: number;
+  page_from: number | null;
+  page_to: number | null;
+  kind: "text" | "table";
+  /** Plain text; matched terms are wrapped in ⟦ … ⟧. Never render as HTML. */
+  snippet: string;
+  text: string;
+  /** RRF fused score. */
+  score: number;
+  scores: { rrf: number; vector_rank: number | null; vector_distance: number | null; fts_rank: number | null; fts_score: number | null };
+};
+
+export type DealSearch = {
+  query: string;
+  k: number;
+  mode: "hybrid" | "fts_only";
+  embedding_model: string | null;
+  took_ms: number;
+  warnings: string[];
+  results: SearchHit[];
 };
 
 export type DocumentVersion = { version: number; sha256: string; byte_size: number; uploaded_by: string; uploaded_at: string };

@@ -168,9 +168,12 @@ def run_once(session: Session, orchestrator: Orchestrator | OrchestratorSelector
         # what the model sees, not the worker's SYSTEM scope.
         owner = jobs.get(claimed.job_id)
         viewer = (owner.created_by or "") if owner is not None else ""
+        from aura.ingest.wiring import make_indexed_text, make_searcher
         refresh = functools.partial(assemble_context,
                                     documents=SqlDocumentRepository(session, viewer),
-                                    store=store_factory(), limits=context_limits())
+                                    store=store_factory(), limits=context_limits(),
+                                    search=make_searcher(session, viewer),
+                                    indexed_text=make_indexed_text(session, viewer))
         outcome = run_segment(
             segment_id=claimed.id,
             orchestrator=chosen,
@@ -293,10 +296,14 @@ def _loop(orchestrator, events: EventPublisher, stop: threading.Event) -> None:
 
 
 def start_worker(orchestrator, events: EventPublisher) -> threading.Event:
-    """Start the segment loop in a daemon thread. Returns its stop event.
+    """Start the segment loop in a daemon thread, and the indexing queue's loop in another
+    (aura.worker.indexer). Returns the stop event (it stops both).
 
     `orchestrator` is a fixed Orchestrator or a selector that picks one per segment. The
     first iteration sweeps stale segments, so a crash's orphans are recovered at startup."""
     stop = threading.Event()
     threading.Thread(target=_loop, args=(orchestrator, events, stop), daemon=True).start()
+    from aura.worker.indexer import _loop as index_loop
+    threading.Thread(target=index_loop, args=(events, stop), daemon=True,
+                     name="aura-indexer").start()
     return stop

@@ -355,6 +355,27 @@ class SqlDocumentRepository:
         self.s.add(DocAccessLogRow(document_id=document_id, accessed_by=actor, action=action))
         self.s.flush()
 
+    def set_index_state(self, document_id: int, *, status: str,
+                        chunk_count: int | None = None, ocr_used: bool | None = None,
+                        page_count: int | None = None, warnings: list[str] | None = None,
+                        error: str | None = None, indexed_at: datetime | None = None) -> None:
+        """The document's index_* columns (the indexing queue's own bookkeeping)."""
+        row = self._row(document_id)
+        if row is None:
+            raise NotFound("Document not found")
+        row.index_status, row.index_error = status, error
+        if chunk_count is not None:
+            row.chunk_count = chunk_count
+        if ocr_used is not None:
+            row.ocr_used = ocr_used
+        if page_count is not None:
+            row.page_count = page_count
+        if warnings is not None:
+            row.index_warnings = list(warnings)
+        if indexed_at is not None:
+            row.indexed_at = indexed_at
+        self.s.flush()
+
     def update_classification(self, document_id: int, doc_class: DocClass,
                               confirmed: bool) -> Document:
         row = self._row(document_id)

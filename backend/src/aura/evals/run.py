@@ -2,6 +2,12 @@
 
     uv run python -m aura.evals.run --capability classify_document|extract_financials|
         draft_email|all [--orchestrator stub|crew] [--limit N] [--cases ID,ID]
+    uv run python -m aura.evals.run --capability retrieval [--embedder ollama|fake]
+
+'retrieval' scores the hybrid search (aura.evals.retrieval): recall@5 and MRR over
+evals/golden/retrieval.jsonl on the fixture deal pack, with the real Ollama embedder when it
+answers (--embedder fake: deterministic hash vectors). It is not an agent capability: it
+never touches autonomy.
 
 Each golden case becomes the same context a job would get (screened and wrapped by
 context_assembly), goes through Orchestrator.run, and is scored deterministically
@@ -51,6 +57,44 @@ def load_golden(capability: str, limit: int | None = None,
     if case_ids:
         cases = [c for c in cases if c.get("id") in case_ids]
     return (cases[:limit] if limit else cases), hashlib.sha256(text.encode()).hexdigest()
+
+
+def run_retrieval(args) -> int:
+    from aura.data.engine import SessionLocal
+    from aura.evals.retrieval import evaluate_retrieval
+    from aura.ingest.embedder import FakeEmbedder, OllamaEmbedder, embedder_available
+    s = get_settings()
+    if args.embedder == "fake":
+        embedder = FakeEmbedder()
+    else:
+        embedder = OllamaEmbedder(s.ollama_base_url, s.embed_model, s.embed_batch,
+                                  s.embed_timeout_seconds, s.embed_max_retries)
+        if not embedder_available(embedder):
+            if args.embedder == "ollama":
+                print(f"{s.embed_model} is not available at {s.ollama_base_url}",
+                      file=sys.stderr)
+                return 2
+            print(f"Ollama/{s.embed_model} unavailable: using the fake embedder")
+            embedder = FakeEmbedder()
+    cases, digest = load_golden("retrieval", args.limit)
+    with SessionLocal() as session:
+        run = evaluate_retrieval(session, embedder, cases, digest,
+                                 s.eval_threshold_retrieval)
+    m = run.metrics
+    for case in run.cases:
+        rank = case.detail.get("first_relevant_rank")
+        top = case.actual["top"][0] if case.actual["top"] else {}
+        print(f"  {case.case_id}  rank={rank if rank else '-':<3} "
+              f"{case.latency_ms:>5} ms  top: {top.get('filename', '-')} "
+              f"p{top.get('pages')}")
+    print(f"retrieval  model={run.model_id}  n={run.n_cases}  recall@5={m['recall_at_5']:.2f}"
+          f"  MRR={m['mrr']:.3f}  index={m['index_seconds']}s  "
+          f"mean query={m['mean_query_ms']} ms  chunks={m['chunks']}  "
+          f"ocr={','.join(m['ocr_used']) or '-'}  run #{run.id}")
+    if not run.passed:
+        print(f"BELOW THRESHOLD: retrieval recall@5 {run.score:.2f} < {run.threshold:.2f}")
+        return 1
+    return 0
 
 
 def threshold_for(capability: str) -> float:
@@ -235,12 +279,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aura.evals.run",
                                      description="Score capabilities against golden sets.")
     parser.add_argument("--capability", required=True,
-                        choices=[*EVAL_CAPABILITIES, "all"])
+                        choices=[*EVAL_CAPABILITIES, "retrieval", "all"])
     parser.add_argument("--orchestrator", choices=["stub", "crew"], default="stub")
     parser.add_argument("--limit", type=int, default=None, help="cases per capability")
     parser.add_argument("--cases", default=None,
                         help="comma-separated golden case ids (e.g. cls-015,cls-016); a "
                              "partial run is stored but not used for autonomy")
+    parser.add_argument("--embedder", choices=["auto", "ollama", "fake"], default="auto",
+                        help="retrieval only: auto uses Ollama when it answers")
     args = parser.parse_args(argv)
 
     from aura.data.engine import SessionLocal, engine
@@ -249,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
               "start the API once).", file=sys.stderr)
         return 2
     tracer.configure(get_settings().tracing_enabled)
+    if args.capability == "retrieval":
+        return run_retrieval(args)
     orchestrator, model_id = make_orchestrator(args.orchestrator)
     capabilities = list(EVAL_CAPABILITIES) if args.capability == "all" else [args.capability]
     case_ids = {c.strip() for c in args.cases.split(",") if c.strip()} if args.cases else None

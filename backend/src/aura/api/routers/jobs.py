@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 
 from aura.api.deps import (current_user, get_audit, get_autonomy, get_deals, get_documents,
                            get_events, get_idempotency, get_jobs, get_parties, get_segments,
-                           get_store)
+                           get_session, get_store)
+from aura.ingest.wiring import make_indexed_text, make_searcher
 from aura.api.rate_limit import check_job_submit
 from aura.worker.runner import context_limits
 from aura.api.schemas.dto import DeadLetterResponse, JobResponse, SubmitJobRequest
@@ -54,7 +55,8 @@ def create_job(body: SubmitJobRequest, response: Response,
                audit=Depends(get_audit), events=Depends(get_events),
                deals=Depends(get_deals), documents=Depends(get_documents),
                parties=Depends(get_parties), store=Depends(get_store),
-               idempotency=Depends(get_idempotency), autonomy=Depends(get_autonomy)):
+               idempotency=Depends(get_idempotency), autonomy=Depends(get_autonomy),
+               uow_session=Depends(get_session)):
     """An optional Idempotency-Key header makes the call safe to repeat: the same key and
     body within 24 hours return the original job (200, header Idempotent-Replayed: true)
     instead of a new one; the same key with a different body is a 409.
@@ -66,7 +68,9 @@ def create_job(body: SubmitJobRequest, response: Response,
         idempotency_key, idempotency, inputs=body.inputs, deal_id=body.deal_id,
         actor=user.username, jobs=jobs, actor_role=user.role, segments=segments,
         audit=audit, events=events, deals=deals, documents=documents, parties=parties,
-        store=store, autonomy=autonomy, limits=context_limits())
+        store=store, autonomy=autonomy, limits=context_limits(),
+        search=make_searcher(uow_session, user.username),
+        indexed_text=make_indexed_text(uow_session, user.username))
     if replayed:
         response.status_code = status.HTTP_200_OK
         response.headers["Idempotent-Replayed"] = "true"

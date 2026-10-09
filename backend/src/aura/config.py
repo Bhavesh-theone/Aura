@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     migration_database_url: str | None = None
     jwt_secret: str = "dev-secret-change-me"
     jwt_ttl_minutes: int = 480
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = "http://127.0.0.1:11434"  # not localhost: it stalls on Windows
     ollama_model: str = "qwen3.5:4b"
     # Let a thinking model (qwen3.5) reason before answering. Off by default: on a 4B model
     # the reasoning often used the whole output budget and the answer came back empty
@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     eval_threshold_classify_document: float = 0.7
     eval_threshold_extract_financials: float = 0.7
     eval_threshold_draft_email: float = 0.8
+    # Retrieval (recall@5 of hybrid search on evals/golden/retrieval.jsonl).
+    eval_threshold_retrieval: float = 0.8
     # Demote a capability when people override it more than this share of decisions...
     autonomy_max_override_rate: float = 0.20
     # ...over at least this many decisions in the last autonomy_window_days days.
@@ -74,6 +76,31 @@ class Settings(BaseSettings):
     max_context_chars: int = 6000
     context_excerpt_chars: int = 2000
     retrieval_top_k: int = 4
+
+    # Document ingestion and search (RUNNING.md, "Documents: formats, indexing and search").
+    max_upload_mb: int = 25
+    max_pages: int = 300
+    ocr_enabled: bool = True
+    ocr_max_pages: int = 50
+    # A PDF page with fewer extractable characters than this is treated as an image (OCR).
+    ocr_min_chars: int = 25
+    chunk_target_tokens: int = 800
+    chunk_overlap_tokens: int = 100
+    # 'ollama' (nomic-embed-text through Ollama) or 'fake' (deterministic hash vectors, for
+    # tests and machines without Ollama; search quality is then keyword-level only).
+    embedder: Literal["ollama", "fake"] = "ollama"
+    embed_model: str = "nomic-embed-text"
+    embed_batch: int = 16
+    embed_timeout_seconds: float = 60.0
+    embed_max_retries: int = 2
+    # Hybrid search: candidates per list, Reciprocal Rank Fusion constant, HNSW ef_search.
+    search_candidates: int = 40
+    rrf_k: int = 60
+    hnsw_ef_search: int = 80
+    # Indexing queue: claims before a transient failure dead-letters the job, backoff base.
+    index_max_attempts: int = 3
+    index_backoff_seconds: float = 15.0
+    index_lease_seconds: int = 900
 
     # Rate limits: job submissions per user per minute (0 = off), model calls at once.
     job_submits_per_minute: int = 20

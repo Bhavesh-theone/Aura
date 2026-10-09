@@ -54,7 +54,8 @@ Legend: **[LLM]** = the model decides · **[Code]** = deterministic code decides
 ### 2. Context assembly
 9. **[Code]** Enrichment at submit time, as the user: the subject document, or the party link (`submit_job.py:30-58`).
 10. **[Code]** `assemble_context` re-reads the subject document through the job user's wall-scoped repositories; a document that is gone or no longer visible raises NotFound (`core/services/context_assembly.py:87-109`).
-11. **[Code]** Retrieval for `classify_document` and `draft_email`: the deal's other documents are chunked (600 characters, 100 overlap) and ranked with BM25, standard library only, deterministic ties (`context_assembly.py:110-120`, `core/services/retrieval.py:31-62`). The top `AURA_RETRIEVAL_TOP_K` chunks ride along with `citations`.
+11. **[Code]** Retrieval for `classify_document` and `draft_email`: hybrid search over the deal's indexed chunks as the job's user (`core/services/search.py`: pgvector cosine top-N + `websearch_to_tsquery`/`ts_rank_cd` top-N, fused by Reciprocal Rank Fusion, k=60, ties by chunk id), wired in `ingest/wiring.py` and `context_assembly._related`. Documents not indexed yet fall back to stdlib BM25 (`core/services/retrieval.py`). The top `AURA_RETRIEVAL_TOP_K` chunks ride along with `citations` and page ranges; an indexed subject document's excerpt is its parsed text.
+11a. **[Code]** Indexing (phase 2): upload/new version/reindex queue an `index_job`; the index worker (`worker/indexer.py`) claims it (SKIP LOCKED), and `core/services/indexing.py` parses (`ingest/parsers.py`: PDF+OCR, DOCX, XLSX, CSV, PPTX, EML, MSG, TXT/MD), chunks (`core/services/chunking.py`: headings start chunks, ~800 tokens with ~100 overlap, tables by whole rows), screens each chunk (risk stored, text kept), embeds (`ingest/embedder.py`, nomic-embed-text, one `embed_run` per batch) and replaces the document's chunks atomically. Retries, dead letters and lease recovery reuse `RetryPolicy`.
 12. **[Code]** Every piece of document text is screened and wrapped as untrusted data before it enters the context (`context_assembly.py:41-84`, `core/policy/injection_policy.py:88-117`).
 13. **[Code]** Budget and compaction: the block is capped at `AURA_MAX_CONTEXT_CHARS`; the least relevant chunks are dropped first, then the excerpt is truncated; `context_budget` records what went (`context_assembly.py:54-83`).
 14. **[Code]** Re-assembly at run time: the worker rebuilds the context as the job's user (not SYSTEM) before each segment, so new document versions and wall changes apply (`worker/runner.py:143-149`, `core/services/run_segment.py:185-186`).
@@ -193,7 +194,7 @@ This follows the 12-factor principle: the model proposes, and deterministic code
 | # | Category | Aura | Notes |
 |---|---|---|---|
 | 1 | Trigger / Ingress | ✅ Strong | Role, wall, capability and autonomy checks; `Idempotency-Key`; per-user rate limit. **Gap:** the rate limit is in process memory, so several API processes would each allow the full rate |
-| 2 | Context assembly | ✅ Strong | Versioned prompts, context re-assembled as the job's user at submit and at run time, BM25 retrieval with citations, character budget with recorded drops. **Gap:** keyword retrieval only (no embeddings); compaction drops or truncates, it does not summarise |
+| 2 | Context assembly | ✅ Strong | Versioned prompts, context re-assembled as the job's user at submit and at run time, hybrid retrieval (pgvector + full text, RRF) over parsed and OCR'd documents with page-level citations under RLS, BM25 fallback for unindexed documents, character budget with recorded drops, retrieval golden set (recall@5, MRR). **Gap:** compaction drops or truncates, it does not summarise; no reranker |
 | 3 | Orchestration | ✅ Strong | Capability dispatch, sequential crew, resume short-circuit, per-segment orchestrator health check with stub fallback, per-segment call and time budgets, daily budget. **Gap:** fixed crews, no planning loop (by design) |
 | 4 | Model access | 🟡 Partial | Recording wrapper, JSON repair, safe fallbacks, retries with backoff, concurrency limit. **Gaps:** one model only; `pinned_model` is stored but never used to choose a model; the concurrency semaphore is per process; `cost_inr` is always 0; the fallback is a keyword stub, not a second model |
 | 5 | Tools & actions | ✅ Strong | Gated MCP wrappers; the standalone MCP server gates itself; `add_internal_note` persists; tool output screened. Gmail draft/send tools exist on a separate approval-checking MCP server the crew never sees. **Gap:** only four crew tools, and `send_email` is deliberately never executable |
@@ -228,7 +229,8 @@ This follows the 12-factor principle: the model proposes, and deterministic code
 | Row-level resolve claim, so two resolves cannot both pass | `handoffs.py:183-188`, `sql.py:264-286` | 7 |
 | Gate inside the standalone deals MCP server | `mcp/servers/deals_server.py:40-63` | 5, 6 |
 | `add_internal_note` persists (`deal_note`, `note_added` audit) | `deals_server.py:85-102`, `core/services/notes.py` | 5 |
-| Context assembly: re-read as the job's user, BM25 retrieval, budget, citations | `core/services/context_assembly.py`, `retrieval.py` | 2, 11 |
+| Context assembly: re-read as the job's user, hybrid retrieval (BM25 fallback), budget, citations | `core/services/context_assembly.py`, `search.py`, `retrieval.py`, `ingest/wiring.py` | 2, 11 |
+| Indexing: parse, chunk, screen, embed, queue with retries | `core/services/indexing.py`, `chunking.py`, `ingest/parsers.py`, `ingest/embedder.py`, `worker/indexer.py` | 2, 4, 11 |
 | Prompt-injection screening of documents, chunks and tool output; forced `untrusted_content` handoff | `core/policy/injection_policy.py`, `tools.py:50-55`, `run_segment.py:67-85, 223-238` | 11, 6 |
 | Versioned, hash-pinned prompt registry | `agents/prompts/` | 2, 9 |
 | Local GenAI-shaped tracer, `trace_span` store, trace API and viewer | `core/tracing.py`, `data/spans.py`, `api/routers/harness.py:74-80` | 9 |
@@ -255,7 +257,7 @@ This follows the 12-factor principle: the model proposes, and deterministic code
 | 5 | Export spans over OTLP to a collector (the tracer is local only) | 9 |
 | 6 | Narrow the worker from SYSTEM-scoped repositories to the job user's scope for everything it reads | 11 |
 | 7 | Real cost accounting, needed only if a paid model is ever used (`cost_inr` is 0) | 4, 9 |
-| 8 | Local embedding retrieval alongside BM25; summarising compaction | 2 |
+| 8 | Summarising compaction; a local reranker over the hybrid results (embedding retrieval landed in phase 2) | 2 |
 | 9 | Send events that have no `deal_id` only to the roles that need them, not to every socket | 13 |
 
 ---

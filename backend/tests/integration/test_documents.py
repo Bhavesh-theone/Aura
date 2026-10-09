@@ -8,7 +8,10 @@ from tests.integration.helpers import make_deal, upload
 
 PAYLOAD_KEYS = {"id", "deal_id", "doc_class", "filename", "sha256", "byte_size",
                 "current_version", "contains_upsi", "sensitivity", "is_executed",
-                "class_confirmed", "uploaded_by", "uploaded_at"}
+                "class_confirmed", "uploaded_by", "uploaded_at",
+                # indexing (phase 2)
+                "index_status", "indexed_at", "chunk_count", "ocr_used", "page_count",
+                "warnings", "index_error"}
 
 
 def _scalar(api, sql, **params):

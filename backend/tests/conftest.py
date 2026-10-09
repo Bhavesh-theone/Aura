@@ -17,6 +17,10 @@ _base = Settings()
 _owner = _base.migration_database_url or \
     "postgresql+psycopg://aura_owner:aura_owner_dev@127.0.0.1:5433/aura"
 
+# Tests never call a model: deterministic hash embeddings (aura.ingest.embedder.FakeEmbedder).
+# The live Ollama test opts back in explicitly.
+os.environ["AURA_EMBEDDER"] = "fake"
+
 os.environ["AURA_DATABASE_URL"] = make_url(_base.database_url).set(
     database=TEST_DB).render_as_string(hide_password=False)
 os.environ["AURA_MIGRATION_DATABASE_URL"] = make_url(_owner).set(

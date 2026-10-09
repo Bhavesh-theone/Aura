@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from aura.core.domain.enums import DocClass
@@ -19,6 +19,15 @@ class Document:
     uploaded_at: datetime
     class_confirmed: bool = False
     is_executed: bool = False
+    # Indexing (migration 0002): pending until the index queue has parsed, chunked and
+    # embedded the current version; failed keeps the reason in index_error.
+    index_status: str = "pending"
+    indexed_at: datetime | None = None
+    chunk_count: int = 0
+    ocr_used: bool = False
+    page_count: int | None = None
+    index_warnings: list[str] = field(default_factory=list)
+    index_error: str | None = None
 
 
 @dataclass

@@ -23,6 +23,10 @@ class LocalFileStore:
     def path(self, sha256: str) -> Path:
         return self.root / sha256
 
+    def read_bytes(self, sha256: str) -> bytes:
+        """The whole stored file (FileNotFoundError when it is missing)."""
+        return self.path(sha256).read_bytes()
+
     def read_head(self, sha256: str, limit: int = 2000) -> str:
         """The first `limit` characters of a stored file, decoded leniently."""
         path = self.path(sha256)

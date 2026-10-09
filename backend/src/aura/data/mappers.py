@@ -93,7 +93,11 @@ def document_to_domain(row: DocumentRow) -> Document:
                     current_version=row.current_version, contains_upsi=row.contains_upsi,
                     sensitivity=row.sensitivity, uploaded_by=row.uploaded_by,
                     uploaded_at=row.uploaded_at, class_confirmed=row.class_confirmed,
-                    is_executed=bool(row.is_executed))
+                    is_executed=bool(row.is_executed),
+                    index_status=row.index_status or "pending", indexed_at=row.indexed_at,
+                    chunk_count=row.chunk_count or 0, ocr_used=bool(row.ocr_used),
+                    page_count=row.page_count, index_warnings=list(row.index_warnings or []),
+                    index_error=row.index_error)
 
 
 def doc_version_to_domain(row: DocVersionRow) -> DocumentVersion:

@@ -7,8 +7,10 @@ from aura.core.domain.document import Document, DocumentVersion
 from aura.core.domain.enums import DocClass, Role
 from aura.core.domain.errors import NotFound, RuleViolation
 from aura.core.policy.rbac_policy import Capability, require
+from aura.core.ports.ingest import DocumentIndexState, IndexQueue
 from aura.core.ports.repositories import (AuditRepository, DealRepository,
                                           DocumentRepository, FileStore)
+from aura.core.services.indexing import enqueue
 
 UPSI_SENSITIVITY = 4
 
@@ -26,10 +28,12 @@ def upload_document(
     documents: DocumentRepository,
     store: FileStore,
     audit: AuditRepository,
+    index_queue: IndexQueue | None = None,
+    index_state: DocumentIndexState | None = None,
 ) -> Document:
     """Upload a document. The same filename on the same deal adds a version to the existing
     document instead of a new document; a new version is not executed until a person says
-    so again."""
+    so again. With an index queue, the (new) current version is queued for indexing."""
     require(actor_role, Capability.EDIT_DEAL_DATA, "upload documents")
     if deals.get(deal_id) is None:
         raise NotFound("Deal not found")
@@ -53,6 +57,8 @@ def upload_document(
                             payload={"document_id": doc.id, "sha256": sha,
                                      "doc_class": doc.doc_class.value,
                                      "version": doc.current_version}))
+    if index_queue is not None and index_state is not None:
+        enqueue(doc, actor, index_queue, index_state)
     return doc
 
 

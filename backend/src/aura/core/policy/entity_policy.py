@@ -10,6 +10,8 @@ _KIND_FOR_ACTION: dict[str, str] = {
     "party_linked": "deal", "mandate_created": "deal",
     "deal_signoff": "signoff",
     "document_uploaded": "document", "document_updated": "document",
+    "document_indexed": "document", "document_index_failed": "document",
+    "document_reindex_requested": "document",
     "diligence_updated": "diligence",
     "condition_created": "condition", "condition_updated": "condition",
     "finding_created": "finding",

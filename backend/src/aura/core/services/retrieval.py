@@ -1,6 +1,9 @@
-"""Keyword retrieval over a deal's own documents (harness category 2): plain BM25 in the
-standard library, no embeddings, nothing leaves the machine. Deterministic: ties are broken by
-document id and chunk number."""
+"""Keyword retrieval over a deal's own documents: plain BM25 in the standard library.
+
+Since phase 2 the primary retrieval is hybrid search over the indexed chunks
+(aura.core.services.search, pgvector + full text). This BM25 is the fallback for documents
+whose index is not ready yet (pending or failed), so a just-uploaded document still informs
+the model. Deterministic: ties are broken by document id and chunk number."""
 import math
 import re
 from collections import Counter
@@ -21,6 +24,9 @@ class Chunk:
     index: int
     text: str
     score: float = 0.0
+    page_from: int | None = None
+    page_to: int | None = None
+    source: str = "bm25"  # bm25 (unindexed fallback) | hybrid
 
 
 def tokens(text: str) -> list[str]:

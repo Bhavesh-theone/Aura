@@ -1,7 +1,7 @@
 import { API_BASE, ApiError, SERVER_DOWN_MESSAGE, apiDownload, apiFetch, errorForStatus, getToken } from "@/shared/api/client";
 import type {
   AgentRun, AgentRunDetail, Condition, CreateMandateBody, Deal, DealDetail, DealParty, DealDocument, DiligenceItem, DocumentVersion,
-  DealNote, Extraction, Finding, GuardResult, Mandate, Member, Party, Signoff,
+  DealNote, DealSearch, DocumentFormats, Extraction, Finding, GuardResult, Mandate, Member, Party, Signoff,
 } from "./types";
 
 export const listDeals = () => apiFetch<Deal[]>("/api/deals");
@@ -59,6 +59,13 @@ export const patchDocument = (docId: number, b: { is_executed?: boolean; doc_cla
   apiFetch<DealDocument>(`/api/documents/${docId}`, { method: "PATCH", body: b });
 export const downloadDocument = (docId: number, name: string) =>
   apiDownload(`/api/documents/${docId}/download`, name);
+/** Re-run parse → chunk → embed. 202 with the document back at index_status "pending". */
+export const reindexDocument = (docId: number) =>
+  apiFetch<DealDocument>(`/api/documents/${docId}/reindex`, { method: "POST" });
+export const getDocumentFormats = () => apiFetch<DocumentFormats>("/api/document-formats");
+/** Hybrid (vector + full-text) passage search across one deal's indexed documents. */
+export const searchDeal = (dealId: number, q: string, k = 8) =>
+  apiFetch<DealSearch>(`/api/deals/${dealId}/search?q=${encodeURIComponent(q)}&k=${k}`);
 
 /* --------------------------------- Diligence -------------------------------- */
 

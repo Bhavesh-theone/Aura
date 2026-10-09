@@ -18,7 +18,7 @@ from aura.core.ports.repositories import (AuditRepository, AutonomyRepository,
                                           IdempotencyRepository, JobRepository,
                                           PartyRepository, SegmentRepository)
 from aura.core.services.autonomy import ensure_enabled
-from aura.core.services.context_assembly import ContextLimits, assemble_context
+from aura.core.services.context_assembly import ContextLimits, Searcher, assemble_context
 from aura.core.tracing import tracer
 
 CAPABILITIES = frozenset({"classify_document", "draft_email", "extract_financials"})
@@ -29,7 +29,7 @@ IDEMPOTENCY_TTL = timedelta(hours=24)
 
 def _enrich(capability: str, inputs: dict, deal, documents: DocumentRepository | None,
             parties: PartyRepository | None, store: FileStore | None,
-            limits: ContextLimits | None = None) -> dict:
+            limits: ContextLimits | None = None, search=None, indexed_text=None) -> dict:
     """Load what the agent needs into the segment context, so the orchestrator never
     reaches into the database itself. Document text is screened for prompt injection and
     wrapped as untrusted data; related chunks of the deal's other documents are retrieved
@@ -55,7 +55,8 @@ def _enrich(capability: str, inputs: dict, deal, documents: DocumentRepository |
         context["party"] = {"id": link.party_id, "display_name": link.display_name,
                             "role": link.role.value}
     return assemble_context({**inputs, **context}, documents, store,
-                            limits or ContextLimits(excerpt_chars=EXCERPT_CHARS))
+                            limits or ContextLimits(excerpt_chars=EXCERPT_CHARS),
+                            search=search, indexed_text=indexed_text)
 
 
 def submit_job(
@@ -73,6 +74,8 @@ def submit_job(
     store: FileStore | None = None,
     autonomy: AutonomyRepository | None = None,
     limits: ContextLimits | None = None,
+    search: Searcher | None = None,
+    indexed_text=None,
 ) -> Job:
     """Create a job and queue its first segment. Returns immediately - no inference here.
 
@@ -85,13 +88,13 @@ def submit_job(
                                     "aura.capability": inputs.get("capability")},
                      deal_id=deal_id) as span:
         job = _submit(inputs, deal_id, actor, jobs, segments, audit, events, deals, documents,
-                      parties, store, autonomy, limits, span)
+                      parties, store, autonomy, limits, span, search, indexed_text)
         span.set("aura.job_id", job.id)
         return job
 
 
 def _submit(inputs, deal_id, actor, jobs, segments, audit, events, deals, documents, parties,
-            store, autonomy, limits, span) -> Job:
+            store, autonomy, limits, span, search=None, indexed_text=None) -> Job:
     now = utcnow()
     deal = None
     if deal_id is not None:
@@ -105,7 +108,8 @@ def _submit(inputs, deal_id, actor, jobs, segments, audit, events, deals, docume
         if capability not in CAPABILITIES:
             raise RuleViolation(f"Unknown capability {capability!r}")
         ensure_enabled(autonomy, capability)
-        context.update(_enrich(capability, inputs, deal, documents, parties, store, limits))
+        context.update(_enrich(capability, inputs, deal, documents, parties, store, limits,
+                               search, indexed_text))
 
     job = jobs.add(Job(id=None, status=JobStatus.PENDING, inputs=inputs,
                        deal_id=deal_id, result=None, created_at=now, created_by=actor,

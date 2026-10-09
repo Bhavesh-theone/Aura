@@ -281,6 +281,8 @@ class MandateCriteriaRow(Base):
 class DocumentRow(Base):
     __tablename__ = "document"
     __table_args__ = (_one_of("doc_class", DocClass),
+                      CheckConstraint("index_status IN ('pending', 'indexed', 'failed')",
+                                      name="ck_document_index_status"),
                       CheckConstraint("sensitivity BETWEEN 1 AND 4", name="ck_sensitivity_range"),
                       CheckConstraint("NOT contains_upsi OR sensitivity = 4",
                                       name="ck_upsi_sensitivity"))
@@ -297,6 +299,16 @@ class DocumentRow(Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     class_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     is_executed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # Indexing state (migration 0002_document_index).
+    index_status: Mapped[str] = mapped_column(String(16), default="pending",
+                                              server_default="pending")
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    ocr_used: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    index_warnings: Mapped[list] = mapped_column(JSONB, default=list,
+                                                 server_default=text("'[]'::jsonb"))
+    index_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DocVersionRow(Base):
@@ -643,9 +655,13 @@ class OutboundMessageRow(Base):
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
+_EMPTY_JSONB = text("'{}'::jsonb")  # (inside DocChunkRow, `text` is the column)
+
+
 class DocChunkRow(Base):
-    """A retrievable piece of a document version (phase 2: chunking and embedding are not
-    wired yet). deal_id is copied from the document so RLS and filters need no join."""
+    """A retrievable piece of a document version, written by the indexing queue
+    (aura.core.services.indexing). deal_id is copied from the document so RLS and filters
+    need no join. meta holds the heading, table header and the injection screening result."""
     __tablename__ = "doc_chunk"
     __table_args__ = (
         UniqueConstraint("document_id", "version", "chunk_index",
@@ -671,6 +687,58 @@ class DocChunkRow(Base):
                                            persisted=True))
     embedding = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    meta: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=_EMPTY_JSONB)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class IndexJobRow(Base):
+    """The indexing queue: one row per document (re-queued on a new version or reindex).
+    Claimed with FOR UPDATE SKIP LOCKED like segments; retried, recovered and dead-lettered
+    by the same RetryPolicy."""
+    __tablename__ = "index_job"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued', 'running', 'done', 'dead_letter')",
+                        name="ck_index_job_status"),
+        Index("ix_index_job_runnable", "status", "not_before"),
+    )
+    id: Mapped[int] = _pk()
+    document_id: Mapped[int] = mapped_column(ForeignKey("document.id"), unique=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="queued", server_default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    span_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EmbedRunRow(Base):
+    """Lineage of embedding calls: one row per batch (not per chunk, and not in agent_run,
+    whose rows count against the daily model budget and the autonomy metrics)."""
+    __tablename__ = "embed_run"
+    __table_args__ = (CheckConstraint("status IN ('ok', 'error')", name="ck_embed_run_status"),
+                      CheckConstraint("kind IN ('document', 'query')",
+                                      name="ck_embed_run_kind"))
+    id: Mapped[int] = _pk()
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), nullable=True,
+                                                index=True)
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("document.id"), nullable=True)
+    model: Mapped[str] = mapped_column(String(128))
+    kind: Mapped[str] = mapped_column(String(16))
+    batch_size: Mapped[int] = mapped_column(Integer)
+    input_chars: Mapped[int] = mapped_column(Integer)
+    dimensions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(8))
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    span_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = _created_at()
 
 
