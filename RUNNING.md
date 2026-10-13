@@ -530,6 +530,18 @@ API (all audited, creator-only): `POST /api/intakes` · `GET /api/intakes` (my d
 
 Eval: `uv run python -m aura.evals.run --capability intake [--llm auto|ollama|off]` scores per-field accuracy, citation validity (the cited chunk really holds the value), conflict detection (a doctored revenue figure must raise a conflict) and time on the Kaveri and Nilgiri packs (`evals/golden/intake.json`).
 
+### Exports: PDF, Word, Excel, JSON, CSV
+
+**Export** on a deal page (next to *Advance stage*) offers a **PDF report**, a **Word** document, an **Excel** workbook, **JSON** and a **ZIP** of CSVs (one per table). Choosing one opens a small dialog to pick the sections (remembered in this browser): deal summary (always), stage history with guard evaluations, overrides and regressions, parties with identifiers and contacts, the deal profile (labelled from the class JSON Schema), financials with their sources (confirmed intake fields, extractions, profile amounts), mandate and criteria, documents (metadata only, never file contents), diligence by severity with findings and their ₹ impact, conditions precedent, compliance flags and sign-offs, decisions (question, decision, reasoning, who and when), agent runs (counts, models, tokens) and the audit-chain status with its head hash at export time. **Export** on the deals list downloads the rows you are looking at (search and Class / Stage / Outcome filters) as CSV or Excel.
+
+- **Who:** dealmakers, analysts and compliance, for deals on their wall (a deal off your wall is 404, exactly like the deal page). Admin has no deal powers: 403. Contact emails are masked (`r***@kaveri.in`) unless you are a dealmaker or compliance.
+- **Money:** human formats (PDF, Word, Excel display) show `₹48.50 Cr` / `₹4.20 L`; Excel cells are numbers with an Indian-grouping ₹ format (`₹1,23,45,678`); JSON and CSV carry whole rupees as integers and timestamps as ISO 8601 UTC. Human formats show times in IST.
+- **PDF:** A4, Newsreader headings and Inter text (bundled in `backend/src/aura/exports/fonts`, SIL OFL; Helvetica if they cannot load), header and footer on every page (deal id, *Confidential*, generated at, page x of y) and a diagonal **UPSI** watermark when any document on the deal is UPSI or sensitivity 4.
+- **Audited and traced:** each export appends `deal_exported` to the audit chain with the format, sections, byte size and the **SHA-256 of the exact bytes sent** (also in the `X-Content-SHA256` response header), under a `deal.export` / `deals.export` span. To check a file later: `certutil -hashfile <file> SHA256` (Windows) or `sha256sum <file>` and compare with the audit row.
+- **Limits:** `AURA_EXPORTS_PER_MINUTE` (10 per user; over it 429 with `Retry-After`; 0 turns it off), `AURA_EXPORT_MAX_MB` (50 → 413), `AURA_EXPORT_MAX_SECONDS` (120 → 503); a table carries at most 5,000 rows (marked truncated).
+
+API: `GET /api/deals/{id}/export?format=pdf|docx|xlsx|json|zip&sections=parties,diligence,...` (default all sections; unknown section → 422) and `GET /api/deals/export?format=csv|xlsx&q=&transaction_class=&stage=&outcome=` (repeat a parameter for several values; `outcome=OPEN` for deals with no outcome). Both stream the file with `Content-Disposition: attachment; filename="AUR-0002_Project-Kaveri_2026-10-13.pdf"`. The JSON has `schema_version: 1`; its `sections.<id>.tables.<table>` hold `columns` (key, label, type) and `rows`.
+
 ### Retries, dead letters and recovery
 
 The worker claims a segment with `SELECT ... FOR UPDATE SKIP LOCKED` on the oldest runnable queued segment, so two workers can never run the same segment and neither waits for the other. Each claim stamps `claimed_by`, `claimed_at` and counts an attempt.

@@ -28,11 +28,14 @@ class Capability(str, Enum):
     VERIFY_CONTACT = "verify_contact"          # vouch that an address really is the party's
     MANAGE_SUPPRESSION = "manage_suppression"  # the do-not-contact list
     VIEW_INTEGRATIONS = "view_integrations"    # Gmail connection status (never a token)
+    # Download a deal (or the deals list) as PDF / Word / Excel / JSON / CSV. Walls still
+    # decide which deals; admin, with no deal powers, cannot.
+    EXPORT_DEAL = "export_deal"
 
 
 _C = Capability
 _DEAL_WORK = {_C.CREATE_DEAL, _C.EDIT_DEAL_DATA, _C.SUBMIT_JOB, _C.VERIFY_EXTRACTION,
-              _C.VIEW_CONTACTS, _C.MANAGE_CONTACTS, _C.EDIT_DEAL_PROFILE}
+              _C.VIEW_CONTACTS, _C.MANAGE_CONTACTS, _C.EDIT_DEAL_PROFILE, _C.EXPORT_DEAL}
 
 _GRANTS: dict[Role, frozenset[Capability]] = {
     Role.ADMIN: frozenset({_C.MANAGE_USERS, _C.MANAGE_AUTONOMY, _C.VIEW_INTEGRATIONS}),
@@ -42,7 +45,7 @@ _GRANTS: dict[Role, frozenset[Capability]] = {
     Role.ANALYST: frozenset(_DEAL_WORK),
     Role.COMPLIANCE: frozenset({_C.RESOLVE_POLICY_HANDOFF, _C.MANAGE_WALL, _C.SIGN_OFF,
                                 _C.EDIT_REGULATORY_FLAGS, _C.OVERRIDE_OWN_GUARDS,
-                                _C.VIEW_CONTACTS, _C.MANAGE_SUPPRESSION}),
+                                _C.VIEW_CONTACTS, _C.MANAGE_SUPPRESSION, _C.EXPORT_DEAL}),
 }
 
 

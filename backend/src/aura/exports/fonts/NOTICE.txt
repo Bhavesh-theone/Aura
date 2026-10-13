@@ -1,0 +1,8 @@
+Fonts used by the PDF export (aura.exports.pdf). Both are licensed under the SIL Open Font
+License 1.1 (OFL-*.txt next to them), which allows bundling them with software.
+
+Inter-Regular.ttf, Inter-SemiBold.ttf: static instances (wght 400 and 600) of Inter, built from
+the latin + latin-ext subsets in the @fontsource-variable/inter npm package (fontTools
+varLib.instancer + merge). Includes the Indian rupee sign (U+20B9).
+Newsreader-Regular.ttf, Newsreader-SemiBold.ttf: the latin subset of Newsreader from the
+@fontsource/newsreader npm package, converted from WOFF to TTF.

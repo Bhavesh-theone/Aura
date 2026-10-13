@@ -147,6 +147,11 @@ class Settings(BaseSettings):
 
     # Rate limits: job submissions per user per minute (0 = off), model calls at once.
     job_submits_per_minute: int = 20
+    # Deal exports (RUNNING.md, "Exports"): per user per minute (0 = off); a rendered file
+    # larger than export_max_mb, or taking longer than export_max_seconds, is refused.
+    exports_per_minute: int = 10
+    export_max_mb: int = 50
+    export_max_seconds: float = 120.0
     max_concurrent_llm_calls: int = 1
 
     # Local tracing (spans in the trace_span table; nothing is exported).

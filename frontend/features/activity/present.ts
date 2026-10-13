@@ -27,6 +27,7 @@ export const AUDIT_ACTIONS = [
   "budget_deferred", "orchestrator_fallback", "stale_result_discarded",
   "autonomy_demoted", "autonomy_promoted", "injection_suspected", "note_added",
   "user_created", "user_updated",
+  "deal_exported",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -78,6 +79,14 @@ const SPEC: Record<AuditAction, Spec> = {
   },
   deal_flags_updated: { verb: "updated regulatory flags", tone: "accent", link: (e) => dealTab(e) },
   deal_signoff: { verb: "signed off a deal", tone: "success", link: (e) => dealTab(e) },
+  deal_exported: {
+    verb: (p) => {
+      const fmt = { pdf: "PDF", docx: "Word", xlsx: "Excel", json: "JSON", zip: "ZIP", csv: "CSV" }[str(p.format) ?? ""] ?? "a file";
+      return p.scope === "deals_list" ? `exported the deals list as ${fmt}` : `exported a deal as ${fmt}`;
+    },
+    tone: "neutral",
+    link: (e) => (e.deal_id ? dealTab(e) : { href: "/deals", label: "Deals" }),
+  },
   wall_member_added: { verb: (p) => (str(p.username) ? `added ${p.username} to a deal wall` : "added someone to a deal wall"), tone: "info", link: (e) => dealTab(e) },
   wall_member_removed: { verb: (p) => (str(p.username) ? `removed ${p.username} from a deal wall` : "removed someone from a deal wall"), tone: "warning", link: (e) => dealTab(e) },
   diligence_updated: {

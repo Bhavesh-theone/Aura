@@ -18,6 +18,7 @@ import { createDeal } from "../api";
 import { useDeals } from "../hooks";
 import { CLASSES, STAGES, TERMINAL_STAGES, type Deal } from "../types";
 import { CLASS_LABEL, ClassChip, StageChip } from "./ui";
+import { DealListExportMenu } from "./ExportMenu";
 
 /* -------------------------------- New deal -------------------------------- */
 
@@ -242,6 +243,11 @@ export function DealsTable() {
           </button>
         ) : null}
         <div className="ml-auto flex items-center gap-2">
+          <DealListExportMenu
+            filters={{ q: query, classes: fClass, stages: fStage, outcomes: fOutcome }}
+            count={rows.length}
+            filtered={Boolean(filtered)}
+          />
           <Tip label={grouping === "stage" ? "Ungroup" : "Group by stage"}>
             <button
               onClick={() => setGrouping(grouping === "stage" ? "none" : "stage")}

@@ -242,3 +242,86 @@ export async function checkHealth(): Promise<boolean> {
     return err instanceof ApiError && err.status !== null;
   }
 }
+
+/** The filename a Content-Disposition header names (RFC 6266 filename* first), or null. */
+export function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(header);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      /* fall through to the plain name */
+    }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/.exec(header);
+  return plain ? plain[1].trim() : null;
+}
+
+export type DownloadedFile = { filename: string; size: number; sha256: string | null };
+
+/**
+ * Authenticated download that saves the file under the name the server gives
+ * (Content-Disposition), with a timeout and abort. Failures are ApiErrors like
+ * apiFetch's; a 429 carries `retryAfter`.
+ */
+export async function apiDownloadFile(
+  path: string,
+  fallbackName: string,
+  { signal, timeoutMs = 120000 }: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<DownloadedFile> {
+  const token = getToken();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  if (signal) signal.addEventListener("abort", () => controller.abort(), { once: true });
+  let res: Response;
+  let blob: Blob;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    setReach("up");
+    if (!res.ok) {
+      let body: unknown = null;
+      try {
+        body = await res.json();
+      } catch {
+        /* non-JSON */
+      }
+      const err = errorForStatus(
+        res.status,
+        body,
+        Boolean(token),
+        res.status === 404 ? "That deal isn’t available to you — it may sit behind a deal wall." : `Download failed (${res.status})`,
+      );
+      const raw = res.headers.get("Retry-After");
+      if (raw && Number.isFinite(Number(raw))) err.retryAfter = Number(raw);
+      throw err;
+    }
+    blob = await res.blob();
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    if (timedOut) throw new ApiError("timeout", `The export did not finish within ${Math.round(timeoutMs / 1000)}s.`);
+    if (signal?.aborted) throw new ApiError("network", "Cancelled.");
+    setReach("down");
+    throw new ApiError("network", SERVER_DOWN_MESSAGE);
+  } finally {
+    clearTimeout(timer);
+  }
+  const filename = filenameFromDisposition(res.headers.get("Content-Disposition")) || fallbackName;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return { filename, size: blob.size, sha256: res.headers.get("X-Content-SHA256") };
+}

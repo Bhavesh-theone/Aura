@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from aura.agents.factory import OrchestratorSelector
 from aura.api.errors import register_error_handlers
 from aura.api.routers import (activity, agent_runs, audit, auth, dashboard, deal_profiles,
-                              deals, diligence, documents, extractions, handoffs, harness,
-                              intakes, jobs, metrics, outbound, parties, users)
+                              deals, diligence, documents, exports, extractions, handoffs,
+                              harness, intakes, jobs, metrics, outbound, parties, users)
 from aura.api.security import decode_token
 from aura.api.ws.hub import hub
 from aura.data.engine import SessionLocal
@@ -25,7 +25,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     # The portal reads these: the 429 countdown and the idempotent-replay notice.
-    expose_headers=["Retry-After", "Idempotent-Replayed"],
+    # Content-Disposition: the export download names its file.
+    expose_headers=["Retry-After", "Idempotent-Replayed", "Content-Disposition",
+                    "X-Content-SHA256"],
 )
 
 app.include_router(auth.router)
@@ -34,6 +36,8 @@ app.include_router(handoffs.router)
 app.include_router(agent_runs.router)
 app.include_router(dashboard.router)
 app.include_router(activity.router)
+# Before deals: /api/deals/export must not be read as /api/deals/{deal_id}.
+app.include_router(exports.router)
 for _r in (deals, intakes, deal_profiles, parties, documents, diligence, audit, users, metrics,
            extractions, harness, outbound):
     app.include_router(_r.router)

@@ -30,7 +30,8 @@ export type Action =
   | "verifyContact" // mark a contact email as verified (outbound needs it)
   | "manageSuppression" // outbound suppression list
   | "viewIntegrations" // settings › integrations
-  | "work"; // analyst work: documents, diligence, conditions, findings, parties, mandates, agent jobs
+  | "work" // analyst work: documents, diligence, conditions, findings, parties, mandates, agent jobs
+  | "export"; // download a deal or the deals list (PDF, Word, Excel, JSON, CSV)
 
 const MATRIX: Record<Action, Role[]> = {
   transition: ["dealmaker"],
@@ -46,6 +47,8 @@ const MATRIX: Record<Action, Role[]> = {
   viewIntegrations: ["admin", "dealmaker"],
   // EDIT_DEAL_DATA (core/policy/rbac_policy.py): dealmakers and analysts.
   work: ["analyst", "dealmaker"],
+  // EXPORT_DEAL: every role with deal powers; admin has none.
+  export: ["dealmaker", "analyst", "compliance"],
 };
 
 /** "Only dealmakers can …" — the sentence shown in tooltips and notices. */
@@ -62,6 +65,7 @@ export const WHO_CAN: Record<Action, string> = {
   manageSuppression: "Only dealmakers and compliance can change the suppression list.",
   viewIntegrations: "Only admins and dealmakers can see integrations.",
   work: "Only analysts and dealmakers can do this.",
+  export: "Only dealmakers, analysts and compliance can export deals.",
 };
 
 export function can(user: User | null | undefined, action: Action): boolean {

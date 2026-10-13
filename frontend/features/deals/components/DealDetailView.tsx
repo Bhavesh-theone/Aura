@@ -22,6 +22,7 @@ import { AdvanceSheet } from "./AdvanceSheet";
 import { StageRail } from "./StageRail";
 import { ComplianceCard, NotesCard, TeamCard } from "./DealRail";
 import { DocumentsTab } from "./DocumentsTab";
+import { DealExportMenu } from "./ExportMenu";
 import { ExtractionsTab } from "./ExtractionsTab";
 import { MandateTab } from "./MandateTab";
 import { RunsTab } from "./RunsTab";
@@ -157,6 +158,7 @@ export function DealDetailView() {
             <h1 className="mt-2.5 font-serif text-[36px] leading-[1.1] text-fg">{deal.name}</h1>
           </div>
           <div className="flex items-center gap-2 pt-6">
+            <DealExportMenu dealId={deal.id} dealName={deal.name} externalId={deal.external_id} />
             {canMove ? (
               <Tip label={deal.allowed_next.length ? "Advance stage" : terminal ? "This deal has ended" : "No further moves"} keys={deal.allowed_next.length ? "a" : undefined}>
                 <span>

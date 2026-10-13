@@ -27,6 +27,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "python-pptx>=1.0.2",
     "rapidocr-onnxruntime>=1.4.4",
+    "reportlab>=4.2",
     "sqlalchemy>=2.0.52",
     "uvicorn[standard]>=0.52.4",
 ]

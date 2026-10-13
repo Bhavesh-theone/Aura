@@ -100,6 +100,11 @@ def _head(session: Session) -> tuple[int, str] | None:
     return (row[0], row[1]) if row else None
 
 
+def chain_head(session: Session) -> tuple[int, str] | None:
+    """(id, row_hash) of the newest audit entry across every wall, or None when empty."""
+    return _head(session)
+
+
 def verify(session: Session, anchor_file: Path | None) -> AuditVerification:
     """Chain check plus anchor comparison. broken_at is the first bad row; for a deleted
     tail it is the first id that should exist and does not."""

@@ -14,6 +14,7 @@ Everything runs on your machine: local model, local database, no cloud services,
 - **New deals fill themselves in.** Upload the deal pack while creating a deal: identifiers, financials (from table grids, ₹ crore/lakh normalised), terms, parties and the class-specific profile are extracted locally, each with a confidence and a citation to the page; you review, resolve conflicts and confirm ([RUNNING.md](RUNNING.md#deal-intake-auto-filled-new-deals)).
 - **Every model call recorded.** Model, prompt template, prompt hash, input, output, tokens and latency. If a run can't be recorded, its output is not used.
 - **Tamper-evident audit.** Every change is written to a SHA-256 hash chain plus a local anchor file, so editing or deleting history is detected.
+- **Exports.** Any deal you can see as a PDF report, Word, Excel (typed ₹ cells), JSON or a ZIP of CSVs, and the deals list as CSV/Excel; every export is audited with the SHA-256 of the file (RUNNING.md, *Exports*).
 - **Deal walls.** Only members of a deal's team can see it, its documents or its agent runs, admins included. Everyone else gets "not found".
 - **Diligence and documents.** Checklists come from templates, and blockers need evidence before they clear. Findings carry ₹ impact. Documents have versions, sensitivity tiers (UPSI is forced to tier 4), an access log and an executed flag. Extractions that feed valuation need confidence of 0.95 or a human sign-off.
 

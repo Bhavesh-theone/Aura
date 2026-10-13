@@ -322,3 +322,17 @@ class OutboundRepository(Protocol):
     def count_since(self, since: datetime) -> int:
         """Messages created since a moment that were not blocked (the daily cap)."""
         ...
+
+
+@runtime_checkable
+class ExportReader(Protocol):
+    """Reads only the deal export needs (aura.core.services.deal_export). Walled: the
+    caller has already found the deal through a wall-scoped DealRepository."""
+    def guard_evaluations(self, deal_id: int) -> list[GuardEvaluation]:
+        """Every guard evaluation recorded on the deal, oldest first, with the guard's
+        name, severity, description and override role filled in."""
+        ...
+    def confirmed_intake(self, deal_id: int):
+        """The confirmed intake the deal was created from (aura.core.domain.intake.Intake),
+        or None."""
+        ...
