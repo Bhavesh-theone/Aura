@@ -97,7 +97,7 @@ def document_to_domain(row: DocumentRow) -> Document:
                     index_status=row.index_status or "pending", indexed_at=row.indexed_at,
                     chunk_count=row.chunk_count or 0, ocr_used=bool(row.ocr_used),
                     page_count=row.page_count, index_warnings=list(row.index_warnings or []),
-                    index_error=row.index_error)
+                    index_error=row.index_error, intake_id=row.intake_id)
 
 
 def doc_version_to_domain(row: DocVersionRow) -> DocumentVersion:
@@ -156,7 +156,8 @@ def agent_run_to_domain(row: AgentRunRow) -> AgentRun:
         confidence=row.confidence, tokens_in=row.tokens_in, tokens_out=row.tokens_out,
         cost_inr=row.cost_inr, latency_ms=row.latency_ms, started_at=row.started_at,
         completed_at=row.completed_at, tool_calls=list(row.tool_calls or []),
-        segment_id=row.segment_id, trace_id=row.trace_id, span_id=row.span_id)
+        segment_id=row.segment_id, trace_id=row.trace_id, span_id=row.span_id,
+        intake_id=row.intake_id)
 
 
 def finding_to_domain(row: FindingRow, deal_id: int) -> Finding:

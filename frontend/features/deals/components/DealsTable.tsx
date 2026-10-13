@@ -12,6 +12,7 @@ import { Avatar, Button, IconButton, Kbd, Segmented, Tip, inputCls, labelCls, se
 import { Sheet } from "@/shared/ui/Sheet";
 import { EmptyState, InlineError, Notice, SkeletonRows, Unavailable } from "@/shared/ui/States";
 import { useToast } from "@/shared/ui/toast";
+import { IntakeDraftsList, openIntake } from "@/features/intake";
 import { isTyping } from "@/shared/ui/shell/PortalShell";
 import { createDeal } from "../api";
 import { useDeals } from "../hooks";
@@ -156,7 +157,7 @@ export function DealsTable() {
 
   useEffect(() => setCursor((c) => Math.min(c, Math.max(0, rows.length - 1))), [rows.length]);
 
-  // j/k + Enter, / to search, c to create.
+  // j/k + Enter, / to search. (c → new deal is global, in the portal shell.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey || document.querySelector("[role=dialog]")) return;
@@ -171,8 +172,6 @@ export function DealsTable() {
       } else if (e.key === "/") {
         e.preventDefault();
         searchRef.current?.focus();
-      } else if (e.key === "c") {
-        setShowNew(true);
       }
     };
     document.addEventListener("keydown", onKey);
@@ -193,7 +192,7 @@ export function DealsTable() {
 
   const newButton = (
     <Tip label="New deal" keys="c">
-      <Button onClick={() => setShowNew(true)}>
+      <Button onClick={() => openIntake(router)}>
         <Plus className="h-4 w-4" strokeWidth={2.2} /> New deal
       </Button>
     </Tip>
@@ -208,6 +207,8 @@ export function DealsTable() {
         description="Every mandate on the desk, where it sits on the 12-stage spine, and who owns it."
         actions={newButton}
       />
+
+      <IntakeDraftsList className="mx-8 mb-4" />
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 px-8 pb-3">

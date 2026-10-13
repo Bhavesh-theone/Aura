@@ -272,7 +272,8 @@ class SqlAgentRunRepository:
             tokens_in=run.tokens_in, tokens_out=run.tokens_out, cost_inr=run.cost_inr,
             latency_ms=run.latency_ms, started_at=run.started_at,
             completed_at=run.completed_at, tool_calls=run.tool_calls,
-            segment_id=run.segment_id, trace_id=run.trace_id, span_id=run.span_id)
+            segment_id=run.segment_id, trace_id=run.trace_id, span_id=run.span_id,
+            intake_id=run.intake_id)
         self.s.add(row)
         self.s.flush()
         self.s.refresh(row)

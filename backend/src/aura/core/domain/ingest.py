@@ -79,7 +79,7 @@ class ChunkDraft:
 class StoredChunk:
     id: int | None
     document_id: int
-    deal_id: int
+    deal_id: int | None  # None for a chunk of a document staged on a deal intake
     version: int
     chunk_index: int
     text: str
@@ -90,6 +90,7 @@ class StoredChunk:
     meta: dict = field(default_factory=dict)
     embedding: list[float] | None = None
     created_at: datetime | None = None
+    intake_id: int | None = None
 
 
 @dataclass
@@ -142,7 +143,7 @@ class IndexJob:
     """The indexing queue: one row per document (a new version replaces a waiting job)."""
     id: int | None
     document_id: int
-    deal_id: int
+    deal_id: int | None  # None while the document is staged on a deal intake
     version: int
     status: str  # queued | running | done | dead_letter
     attempts: int = 0
@@ -155,6 +156,7 @@ class IndexJob:
     span_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    intake_id: int | None = None
 
 
 @dataclass

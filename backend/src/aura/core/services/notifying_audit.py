@@ -13,7 +13,14 @@ class NotifyingAudit:
     def append(self, entry: AuditEntry) -> AuditEntry:
         saved = self._inner.append(entry)
         kind = entity_kind_for(entry.action)
-        if kind is not None:
+        if kind == "intake":
+            # A draft intake belongs to its creator alone: the event names its recipient
+            # (the hub sends it to nobody else) and never a deal.
+            payload = entry.payload or {}
+            self._events.publish("entity_changed", {
+                "kind": kind, "deal_id": None, "intake_id": payload.get("intake_id"),
+                "recipient": payload.get("recipient") or entry.actor})
+        elif kind is not None:
             self._events.publish("entity_changed", {"kind": kind, "deal_id": entry.deal_id})
         return saved
 

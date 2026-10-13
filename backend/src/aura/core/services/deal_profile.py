@@ -88,6 +88,16 @@ def validate_profile(transaction_class: TransactionClass, version: int | None,
                             + "; ".join(f"{_path(e)}: {e.message}" for e in errors))
 
 
+def profile_errors(transaction_class: TransactionClass | str, profile: dict,
+                   version: int | None = None) -> list[tuple[str, str]]:
+    """Every schema problem as (dotted path under the profile, message); [] when valid."""
+    v = version or CURRENT_PROFILE_VERSION
+    cls = TransactionClass(transaction_class)
+    errors = sorted(_validator(cls, v).iter_errors(profile),
+                    key=lambda e: (list(map(str, e.absolute_path)), e.message))
+    return [(".".join(str(p) for p in e.absolute_path), e.message) for e in errors]
+
+
 def changed_keys(before: dict, after: dict) -> list[str]:
     """Top-level keys added, removed or changed."""
     missing = object()

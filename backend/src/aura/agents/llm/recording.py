@@ -148,7 +148,8 @@ class RunRecorder:
             tokens_in=tokens_in, tokens_out=tokens_out, cost_inr=0.0, latency_ms=latency_ms,
             started_at=started_at, completed_at=completed_at,
             tool_calls=tool_calls if tool_calls is not None else _tool_calls(parsed),
-            segment_id=self.context.segment_id, trace_id=span.trace_id, span_id=span.span_id)
+            segment_id=self.context.segment_id, trace_id=span.trace_id, span_id=span.span_id,
+            intake_id=getattr(self.context, "intake_id", None))
         try:
             saved = self.context.runs.record(run)
             self.last_run_id = saved.id

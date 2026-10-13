@@ -324,3 +324,23 @@ Live agents (CPU inference): classify 31 s (one Document Classifier call, propos
 
 D5 / M4: dry run done on demo deal (E2E Kaveri Textiles); real client deal pending business owner.
 
+
+
+## 5. Phase 3: deal intake (auto-filled new deals), 2026-10-13
+
+Scope: PRD F1 (deal creation) gains a document-first path. Creating a deal by uploading its pack, extraction of identity, transaction, parties, financials, terms, regulatory flags, the class profile and mandate criteria, with a human review (confidence, citations, conflicts) before `create_deal` runs. The deal still enters at ORIGINATED through the same service, guards, wall and audit; nothing about the stage machine changed.
+
+| Requirement | Where | Status |
+|---|---|---|
+| Draft is private until confirmed | RLS `0004_deal_intake` (`aura_viewer_intake_ids()` on document, doc_chunk, index_job, agent_run; deal_intake policy unchanged) + repository filter | Done; `test_a_draft_is_private_to_its_creator` |
+| Staged files reuse the index pipeline, chunks re-pointed on confirm | `document.intake_id`, `SqlIntakeRepository.move_to_deal` | Done; same chunk rows (35 for 6 files in the live run) now carry the deal id |
+| Extraction never in a request; retries, dead letter, tracing | `worker/intake.py`, `intake.extract` span | Done; deterministic fallback after the last model attempt |
+| Model runs recorded, not autonomy-counted | `agent_run.archetype = intake_extractor`, `intake_id` | Done (7 runs in the live intake, re-pointed to the deal) |
+| Field validation, ₹ normalisation, conflicts, 0.85 / 0.95 rules | `core/services/intake_fields.py`, `intake_extraction.py` | Done; unit tests |
+| Confirm → deal + parties + identifiers + mandate + profile + documents + flags, one unit of work | `core/services/intake.py: confirm_intake` | Done; 409 twice, 422 with `field_errors` |
+| Override-rate metric | `GET /api/metrics → evaluation.intake` | Done (live: 1 of 38 auto-filled fields changed) |
+| Eval | `python -m aura.evals.run --capability intake` | Done (see RUNNING.md) |
+
+Live run (real UI at `/deals/new`, bhavesh, live `qwen3.5:4b` on CPU, Docling): six Kaveri files (audited financials PDF, NCD term sheet PDF, scanned borrowings schedule PDF, IM DOCX, model XLSX, teaser PPTX) uploaded at 17:10:08; all six indexed by 17:11:40; extraction 209 s (identity, transaction, parties, terms, profile and mandate groups asked; financials skipped because the table grids already gave FY24 revenue ₹412.38 Cr, EBITDA ₹68.15 Cr, PAT ₹31.93 Cr and net debt ₹96.40 Cr at 0.99 across three documents); review ready at 17:15:12 (about 5 minutes from upload). CIN U29253MH2011PTC215478 and PAN AAFCK4821M were found by regex with page citations; the citation pane opened the teaser slide with the revenue row highlighted. One field was corrected by hand (the model gave incorporation date 2011-01-01 from "incorporated in 2011"; it was cleared), eight low-confidence fields were accepted, and confirming created AUR-0002 "Project Kaveri" (DEBT, ORIGINATED) with the issuer party (CIN + PAN), the SEBI flag, a draft mandate with criteria, a 12-field DEBT profile and the six documents already indexed. No conflict arose in this pack, so none was resolved in the UI; conflict resolution is covered by the integration test and the eval's conflict probe.
+
+Bugs found and fixed during the run: the first confirm failed with 422 because a model-suggested criterion (`minimum_rating gte "A-"`) broke the mandate rules (now normalised: a word under gte/lte becomes `eq`; model criteria start unticked; derived criteria come first); the 4B model looped while listing party types under prompt v1 (`intake.parties@v2`, with enum-constrained structured output); free-text fields from two documents raised paraphrase "conflicts" (texts now agree when the shorter wording is contained in the longer); queued files showed a "Reading" spinner; the confirm summary listed no parties (the company is now shown) and rounded ₹412.38 Cr to ₹412 Cr. Screenshots: `scratchpad/intake/shots/01..16`. The Playwright session could not deliver keyboard events to the page, so the `c` shortcut was verified by dispatching the key event in the page.

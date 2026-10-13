@@ -7,7 +7,9 @@ from aura.core.domain.enums import DocClass
 @dataclass
 class Document:
     id: int | None
-    deal_id: int
+    # None while the document is staged on a deal intake (intake_id set), before the deal
+    # exists (migration 0004_deal_intake).
+    deal_id: int | None
     doc_class: DocClass
     filename: str
     sha256: str
@@ -28,6 +30,8 @@ class Document:
     page_count: int | None = None
     index_warnings: list[str] = field(default_factory=list)
     index_error: str | None = None
+    # The deal intake the document was uploaded to; kept after the intake is confirmed.
+    intake_id: int | None = None
 
 
 @dataclass

@@ -47,7 +47,10 @@ class EventHub:
         self._clients.pop(ws, None)
 
     def recipients(self, payload: dict) -> set[str] | None:
-        """None means everyone; otherwise the usernames allowed to hear it."""
+        """None means everyone; otherwise the usernames allowed to hear it. An event naming a
+        recipient (a private draft such as a deal intake) reaches that user only."""
+        if payload.get("recipient"):
+            return {str(payload["recipient"])}
         deal_id = payload.get("deal_id")
         return None if deal_id is None else self._members_for_deal(deal_id)
 

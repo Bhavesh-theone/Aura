@@ -22,7 +22,12 @@ _NAME = re.compile(r"^(?P<id>[a-z0-9_.]+)@v(?P<version>[0-9]+)\.md$")
 
 # The version in use for each template id.
 ACTIVE = {"crew.researcher": 1, "crew.drafter": 1, "crew.reviewer": 1,
-          "classify_document": 2, "extract_financials": 1}
+          "classify_document": 2, "extract_financials": 1,
+          # Deal intake extraction (archetype intake_extractor), one template per field group.
+          **{f"intake.{g}": 1 for g in ("identity", "transaction", "financials", "terms",
+                                       "regulatory", "profile", "mandate")},
+          # v2: v1 invited the 4B model to enumerate party types until it ran out of tokens.
+          "intake.parties": 2}
 
 
 @dataclass(frozen=True)

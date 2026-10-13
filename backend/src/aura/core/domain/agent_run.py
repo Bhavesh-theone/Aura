@@ -29,3 +29,6 @@ class AgentRun:
     # The llm.call span the run was recorded under (migration 0012).
     trace_id: str | None = None
     span_id: str | None = None
+    # A deal-intake extraction call (archetype intake_extractor) made before the deal
+    # exists: private to the intake's creator until the intake is confirmed.
+    intake_id: int | None = None

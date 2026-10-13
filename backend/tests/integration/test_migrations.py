@@ -55,7 +55,7 @@ def test_baseline_goes_up_down_and_up_again(scratch):
     cfg = alembic_config(owner)
     command.upgrade(cfg, "head")
     assert Base.metadata.tables.keys() <= _tables(owner)
-    assert _scalar(owner, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'aura\\_%'") == 7
+    assert _scalar(owner, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'aura\\_%'") == 8
     command.downgrade(cfg, "base")
     assert _tables(owner) == {"alembic_version"}
     assert _scalar(owner, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'aura\\_%'") == 0
@@ -148,4 +148,4 @@ def test_the_app_role_has_dml_only(scratch):
                 "DROP TABLE users", "TRUNCATE users"):
         with pytest.raises((ProgrammingError, DBAPIError)):
             _scalar(app, sql)
-    assert _scalar(app, "SELECT version_num FROM alembic_version") == "0003_embed_run_vlm_page"
+    assert _scalar(app, "SELECT version_num FROM alembic_version") == "0004_deal_intake"

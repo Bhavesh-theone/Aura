@@ -291,7 +291,7 @@ class SqlDocumentRepository:
             current_version=document.current_version, contains_upsi=document.contains_upsi,
             sensitivity=document.sensitivity, uploaded_by=document.uploaded_by,
             uploaded_at=document.uploaded_at, class_confirmed=document.class_confirmed,
-            is_executed=document.is_executed)
+            is_executed=document.is_executed, intake_id=document.intake_id)
         self.s.add(row)
         self.s.flush()
         self.s.add(DocVersionRow(document_id=row.id, version=row.current_version,

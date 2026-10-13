@@ -25,6 +25,7 @@ export function InrInput({
   onUnit,
   invalid,
   disabled,
+  emptyHint = "Leave blank if the impact can’t be quantified yet.",
 }: {
   id: string;
   text: string;
@@ -33,6 +34,8 @@ export function InrInput({
   onUnit: (u: InrUnit) => void;
   invalid?: boolean;
   disabled?: boolean;
+  /** Readback line while the field is blank. */
+  emptyHint?: string;
 }) {
   const rupees = toRupees(text, unit);
   const bad = text.trim() !== "" && rupees === null;
@@ -71,7 +74,7 @@ export function InrInput({
             <span className="num font-mono"> · {formatINR(rupees)}</span>
           </>
         ) : (
-          "Leave blank if the impact can’t be quantified yet."
+          emptyHint
         )}
       </p>
     </div>

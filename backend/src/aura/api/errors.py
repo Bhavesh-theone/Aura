@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from aura.core.domain.errors import (Conflict, Forbidden, GuardBlocked, InvalidTransition,
                                      NotFound, RateLimited, RuleViolation)
 from aura.core.domain.ingest import CorruptDocument, DocumentTooLarge, UnsupportedFormat
+from aura.core.services.intake import IntakeInvalid
 
 
 def evaluation_out(ev) -> dict:
@@ -37,6 +38,12 @@ def register_error_handlers(app: FastAPI) -> None:
         return JSONResponse({"detail": str(exc), "retry_after_seconds": retry_after},
                             status_code=429, headers={"Retry-After": str(retry_after)})
 
+    def intake_invalid(_: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse({"detail": str(exc),
+                             "field_errors": getattr(exc, "field_errors", {})},
+                            status_code=422)
+
+    app.add_exception_handler(IntakeInvalid, intake_invalid)
     app.add_exception_handler(RateLimited, limited)
     app.add_exception_handler(InvalidTransition, blocked)
     app.add_exception_handler(GuardBlocked, blocked)

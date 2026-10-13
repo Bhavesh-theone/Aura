@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/features/auth/hooks";
 import { listHandoffs } from "@/features/handoffs/api";
+import { openIntake } from "@/features/intake";
 import { handoffEvents, useEvents } from "@/shared/api/events";
 import { useApi } from "@/shared/lib/useApi";
 import { TooltipProvider } from "@/shared/ui/primitives";
@@ -71,6 +72,12 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
         toggleSidebar();
         return;
       }
+      // c → new deal (the intake wizard), from anywhere but the wizard itself.
+      if (e.key === "c" && Date.now() - g >= 900 && !pathname.startsWith("/deals/new")) {
+        e.preventDefault();
+        openIntake(router);
+        return;
+      }
       if (e.key === "g") {
         g = Date.now();
       } else if (Date.now() - g < 900) {
@@ -81,7 +88,7 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [router, toggleSidebar, role]);
+  }, [router, toggleSidebar, role, pathname]);
 
   return (
     <TooltipProvider>

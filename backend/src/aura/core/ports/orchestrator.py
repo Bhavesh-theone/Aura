@@ -40,6 +40,8 @@ class RunContext:
     archetype_prefix: str = ""
     # Recorded in each run's input_digest (the context's prompt-injection screening).
     notes: dict | None = None
+    # Deal-intake extraction: the intake the runs belong to (agent_run.intake_id).
+    intake_id: int | None = None
 
 
 @dataclass

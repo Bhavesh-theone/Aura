@@ -8,7 +8,7 @@ from aura.agents.factory import OrchestratorSelector
 from aura.api.errors import register_error_handlers
 from aura.api.routers import (activity, agent_runs, audit, auth, dashboard, deal_profiles,
                               deals, diligence, documents, extractions, handoffs, harness,
-                              jobs, metrics, outbound, parties, users)
+                              intakes, jobs, metrics, outbound, parties, users)
 from aura.api.security import decode_token
 from aura.api.ws.hub import hub
 from aura.data.engine import SessionLocal
@@ -34,8 +34,8 @@ app.include_router(handoffs.router)
 app.include_router(agent_runs.router)
 app.include_router(dashboard.router)
 app.include_router(activity.router)
-for _r in (deals, deal_profiles, parties, documents, diligence, audit, users, metrics, extractions,
-           harness, outbound):
+for _r in (deals, intakes, deal_profiles, parties, documents, diligence, audit, users, metrics,
+           extractions, harness, outbound):
     app.include_router(_r.router)
 register_error_handlers(app)
 

@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     # Parsing: mean of table-cell accuracy, row/col field accuracy and key-field recall on
     # the Project Kaveri fixtures (tests/fixtures/parsing), for the PDF parser in use.
     eval_threshold_parsing: float = 0.9
+    # Deal intake: field accuracy over evals/golden/intake.json (Kaveri + Nilgiri packs).
+    eval_threshold_intake: float = 0.8
     # Demote a capability when people override it more than this share of decisions...
     autonomy_max_override_rate: float = 0.20
     # ...over at least this many decisions in the last autonomy_window_days days.
@@ -123,6 +125,25 @@ class Settings(BaseSettings):
     # Longer than the slowest legitimate run: Docling up to docling_timeout_s plus the vision
     # model on up to vlm_max_pages scanned pages (~1 min each).
     index_lease_seconds: int = 1800
+
+    # Deal intake (RUNNING.md, "Deal intake: auto-filled new deals"). A field extracted with
+    # less confidence than this is flagged for review; valuation inputs (revenue, EBITDA, PAT,
+    # net debt, valuation) need 0.95 or a person's confirmation.
+    intake_confidence_threshold: float = 0.85
+    intake_max_files: int = 30
+    # The local model fills what the deterministic extractors (identifier regexes, table
+    # grids) cannot: 'ollama' (ollama_model, think off, temperature 0, JSON only) or 'off'
+    # (deterministic extraction only).
+    intake_llm: Literal["ollama", "off"] = "ollama"
+    intake_llm_timeout_s: float = 300.0
+    intake_llm_num_ctx: int = 8192
+    intake_top_k: int = 6              # chunks retrieved per field group
+    intake_context_chars: int = 5000   # document text per model call
+    intake_max_llm_calls: int = 24     # per extraction run
+    intake_max_seconds: int = 3600     # per extraction run
+    intake_max_attempts: int = 3
+    intake_backoff_seconds: float = 20.0
+    intake_lease_seconds: int = 3900
 
     # Rate limits: job submissions per user per minute (0 = off), model calls at once.
     job_submits_per_minute: int = 20

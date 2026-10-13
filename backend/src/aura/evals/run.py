@@ -6,6 +6,7 @@
         [--scan-vlm off|fallback|always]
     uv run python -m aura.evals.run --capability parsing [--pdf-parser pymupdf|docling|both]
         [--scan-vlm off|fallback|always]
+    uv run python -m aura.evals.run --capability intake [--llm auto|ollama|off]
 
 'retrieval' scores the hybrid search (aura.evals.retrieval): recall@5 and MRR over
 evals/golden/retrieval.jsonl on the fixture deal pack, with the real Ollama embedder when it
@@ -349,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aura.evals.run",
                                      description="Score capabilities against golden sets.")
     parser.add_argument("--capability", required=True,
-                        choices=[*EVAL_CAPABILITIES, "retrieval", "parsing", "all"])
+                        choices=[*EVAL_CAPABILITIES, "retrieval", "parsing", "intake", "all"])
     parser.add_argument("--orchestrator", choices=["stub", "crew"], default="stub")
     parser.add_argument("--limit", type=int, default=None, help="cases per capability")
     parser.add_argument("--cases", default=None,
@@ -362,9 +363,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scan-vlm", choices=["off", "fallback", "always"], default=None,
                         help="parsing and retrieval: vision model for scanned pages "
                              "(default off)")
+    parser.add_argument("--llm", choices=["auto", "ollama", "off"], default="auto",
+                        help="intake only: the local model (auto: when Ollama answers) or "
+                             "deterministic extraction only")
     args = parser.parse_args(argv)
     if args.capability == "parsing":
         return run_parsing(args)
+    if args.capability == "intake":
+        from aura.evals.intake import run as run_intake
+        tracer.configure(get_settings().tracing_enabled)
+        return run_intake(args.llm)[0]
 
     from aura.data.engine import SessionLocal, engine
     if not inspect(engine).has_table("eval_run"):

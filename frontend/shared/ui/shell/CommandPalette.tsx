@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/features/auth/hooks";
 import { listDeals } from "@/features/deals/api";
+import { openIntake } from "@/features/intake";
 import type { Deal } from "@/features/deals/types";
 import { cx, stageLabel } from "@/shared/lib/format";
 import { Kbd, Keys } from "@/shared/ui/primitives";
@@ -67,7 +68,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         search: `go ${n.label}`,
         run: go(n.href),
       })),
-      { id: "new", label: "Create deal", group: "Actions", icon: <Plus className="h-4 w-4" />, keys: "c", search: "new create deal", run: () => { router.push("/deals?new=1"); window.dispatchEvent(new Event("aura:new-deal")); } },
+      { id: "new", label: "New deal from documents", group: "Actions", icon: <Plus className="h-4 w-4" />, keys: "c", search: "new create deal intake upload documents wizard", run: () => openIntake(router) },
+      { id: "quick", label: "Quick-create blank deal", group: "Actions", icon: <Plus className="h-4 w-4" />, search: "new create deal quick blank empty", run: () => { router.push("/deals?new=1"); window.dispatchEvent(new Event("aura:new-deal")); } },
       { id: "theme", label: "Toggle light / dark theme", group: "Actions", icon: <Moon className="h-4 w-4" />, search: "theme dark light mode", run: toggle },
       { id: "out", label: "Sign out", group: "Actions", icon: <LogOut className="h-4 w-4" />, search: "sign out logout", run: signOut },
     ];

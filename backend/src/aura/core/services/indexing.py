@@ -55,7 +55,8 @@ def enqueue(doc: Document, actor: str, queue: IndexQueue, state: DocumentIndexSt
     trace_id, span_id = current_trace()
     state.set_index_state(doc.id, status="pending", error=None)
     doc.index_status, doc.index_error = "pending", None
-    return queue.enqueue(doc.id, doc.deal_id, doc.current_version, actor, trace_id, span_id)
+    return queue.enqueue(doc.id, doc.deal_id, doc.current_version, actor, trace_id, span_id,
+                         intake_id=doc.intake_id)
 
 
 def request_reindex(document_id: int, actor: str, actor_role: Role,
@@ -186,7 +187,7 @@ def _index(job, doc, read_bytes, parser, embedder, chunks, state, audit, runs, s
                                       version=doc.current_version, chunk_index=d.index,
                                       text=d.text, kind=d.kind, page_from=d.page_from,
                                       page_to=d.page_to, embedding_model=embedder.model,
-                                      meta=meta))
+                                      meta=meta, intake_id=doc.intake_id))
         vectors = embed_chunks([c.text for c in stored], embedder, collected, doc.deal_id,
                                doc.id, settings.embed_batch) if stored else []
         for c, v in zip(stored, vectors):
@@ -209,9 +210,17 @@ def _index(job, doc, read_bytes, parser, embedder, chunks, state, audit, runs, s
                    "warnings": warnings, "embedding_model": embedder.model,
                    "flagged_chunks": flagged}
         span.set_attributes({"aura.chunks": count, "aura.ocr_used": parsed.ocr_used})
-        audit.append(AuditEntry(id=None, job_id=None, deal_id=doc.deal_id, actor="system",
-                                action="document_indexed", created_at=now,
-                                payload={**summary, "index_job_id": job.id}))
+        if doc.deal_id is None:  # staged on an intake: only its creator hears about it
+            audit.append(AuditEntry(
+                id=None, job_id=None, deal_id=None, actor="system",
+                action="intake_file_indexed", created_at=now,
+                payload={"intake_id": doc.intake_id, "document_id": doc.id,
+                         "version": doc.current_version, "chunks": count,
+                         "index_job_id": job.id, "recipient": doc.uploaded_by}))
+        else:
+            audit.append(AuditEntry(id=None, job_id=None, deal_id=doc.deal_id, actor="system",
+                                    action="document_indexed", created_at=now,
+                                    payload={**summary, "index_job_id": job.id}))
         return summary
 
 
@@ -241,12 +250,15 @@ def handle_index_failure(job: IndexJob, exc: BaseException, policy: RetryPolicy,
     if not queue.update(job, claimed_by):
         return "superseded"
     state.set_index_state(job.document_id, status="failed", error=error)
+    payload = {"document_id": job.document_id, "index_job_id": job.id,
+               "attempts": job.attempts, "error": error,
+               "reason": "max_attempts" if outcome == "dead_letter" else "permanent"}
+    if job.deal_id is None and job.intake_id is not None:
+        payload.update(intake_id=job.intake_id, recipient=job.requested_by)
     audit.append(AuditEntry(id=None, job_id=None, deal_id=job.deal_id, actor="system",
-                            action="document_index_failed", created_at=now,
-                            payload={"document_id": job.document_id, "index_job_id": job.id,
-                                     "attempts": job.attempts, "error": error,
-                                     "reason": "max_attempts" if outcome == "dead_letter"
-                                     else "permanent"}))
+                            action="document_index_failed" if job.deal_id is not None
+                            else "intake_file_index_failed", created_at=now,
+                            payload=payload))
     return outcome
 
 

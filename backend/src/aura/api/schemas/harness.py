@@ -113,6 +113,10 @@ class EvaluationMetricsOut(BaseModel):
     latest_runs: list[LatestEvalOut]
     override_rate: list[OverrideRateOut]
     autonomy: list[AutonomyLevelOut]
+    # Deal intake (phase 3): share of auto-filled fields the creator changed before
+    # confirming {intakes_confirmed, auto_filled_fields, fields_changed, override_rate}.
+    # Not an agent capability: it never feeds autonomy.
+    intake: dict | None = None
 
 
 class SecurityMetricsOut(BaseModel):

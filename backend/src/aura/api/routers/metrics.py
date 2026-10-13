@@ -16,6 +16,7 @@ from aura.api.schemas.deals import (MetricsOut, ReliabilityMetricsOut, StageDwel
                                     SuccessMetricsOut)
 from aura.core.domain.user import User
 from aura.core.services.metrics import compute_metrics
+from aura.data.repositories.sql_intake import SqlIntakeRepository
 from aura.data.verify_audit import verify
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
@@ -44,7 +45,9 @@ def metrics(user: User = Depends(current_user), s: Session = Depends(get_session
             outbound_executed=m.outbound_executed,
             deals_closed_end_to_end=m.deals_closed_end_to_end),
         reliability=ReliabilityMetricsOut(**vars(m.reliability)) if m.reliability else None,
-        evaluation=EvaluationMetricsOut(**vars(evaluation_metrics(evals, autonomy, handoffs))),
+        evaluation=EvaluationMetricsOut(**vars(evaluation_metrics(evals, autonomy, handoffs)),
+                                        intake=SqlIntakeRepository(s, user.username)
+                                        .override_stats()),
         security=SecurityMetricsOut(**vars(security_metrics(audit, handoffs))),
         outbound=OutboundMetricsOut(**vars(outbound_metrics(
             messages, handoffs, audit, OutboundMode(get_settings().outbound_mode)))))

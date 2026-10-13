@@ -30,7 +30,7 @@ class EmbedRunSink(Protocol):
 
 
 class ChunkRepository(Protocol):
-    def replace_for_document(self, document_id: int, deal_id: int, version: int,
+    def replace_for_document(self, document_id: int, deal_id: int | None, version: int,
                              chunks: list[StoredChunk]) -> int:
         """Delete every chunk of the document and insert these, in one transaction."""
         ...
@@ -42,8 +42,9 @@ class ChunkRepository(Protocol):
 
 
 class IndexQueue(Protocol):
-    def enqueue(self, document_id: int, deal_id: int, version: int, requested_by: str,
-                trace_id: str | None, span_id: str | None) -> IndexJob:
+    def enqueue(self, document_id: int, deal_id: int | None, version: int,
+                requested_by: str, trace_id: str | None, span_id: str | None,
+                intake_id: int | None = None) -> IndexJob:
         """Queue (or re-queue) the document's indexing; one row per document."""
         ...
     def claim_next(self, worker_id: str, now: datetime) -> IndexJob | None: ...

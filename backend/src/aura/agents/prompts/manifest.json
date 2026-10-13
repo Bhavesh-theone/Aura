@@ -4,5 +4,14 @@
   "crew.drafter@v1": "b08d50cb2c3910e11615d749e40c29f3cc506f67bb012615be1e522973ddb99e",
   "crew.researcher@v1": "c944dfbab98043b94c1b78becb524dac183735567d8855e85e08c86dc08493c3",
   "crew.reviewer@v1": "3b563f6c84953c2630109c0a9627d1aeae5ba4e6f572272e1a830544cd63875c",
-  "extract_financials@v1": "adb9a08c62503ba25b28108bddd90af510737bdda2dec396758933633b75a71e"
+  "extract_financials@v1": "adb9a08c62503ba25b28108bddd90af510737bdda2dec396758933633b75a71e",
+  "intake.financials@v1": "c7734c5595f6df49870df0f3662a26ffeac3fbc6df06f241eec0c447419352cd",
+  "intake.identity@v1": "99e3ab8d80c942cd6d2c067fae35e4e1ff6b983dd12fea117051a848e9f58230",
+  "intake.mandate@v1": "1e6c5e3d634e31e4e0009e9c5a1679cbf7186ddfb704b70d5ab90674667cac8c",
+  "intake.parties@v1": "4ab5798b9a150f1c7fee9abb7e3309a23d4dff80f4492c6e3ae8d0675beecb93",
+  "intake.parties@v2": "67105474a56795a7cbf6fa08b67776d9366c35bc84ab40e1f6683fb8465a2cf7",
+  "intake.profile@v1": "8a02a72d9b3c7ac9cc6d2b80b6271fb2851f115723d71e759ab7b68958e8b875",
+  "intake.regulatory@v1": "a1c91f9f1a9024c8944147011635fe46e467f64c8f95aa6bedd93ee42ed31ffc",
+  "intake.terms@v1": "185f49ac49b18b25f30f3a8d6e069b292e54bfc1f0af103c9e622ee22bdbf370",
+  "intake.transaction@v1": "fc612697007c20c4c7ddf7b0d3bb712814caea9a071594fc2bbe3e54018efffe"
 }

@@ -285,9 +285,16 @@ class DocumentRow(Base):
                                       name="ck_document_index_status"),
                       CheckConstraint("sensitivity BETWEEN 1 AND 4", name="ck_sensitivity_range"),
                       CheckConstraint("NOT contains_upsi OR sensitivity = 4",
-                                      name="ck_upsi_sensitivity"))
+                                      name="ck_upsi_sensitivity"),
+                      CheckConstraint("deal_id IS NOT NULL OR intake_id IS NOT NULL",
+                                      name="ck_document_deal_or_intake"))
     id: Mapped[int] = _pk()
-    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    # NULL while the document is staged on a deal intake (0004_deal_intake): it then belongs
+    # to the intake, private to its creator, until the intake is confirmed into a deal.
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), index=True,
+                                                nullable=True)
+    intake_id: Mapped[int | None] = mapped_column(ForeignKey("deal_intake.id"), index=True,
+                                                  nullable=True)
     doc_class: Mapped[str] = mapped_column(String(32))
     filename: Mapped[str] = mapped_column(String(255))
     sha256: Mapped[str] = mapped_column(String(64))
@@ -500,6 +507,10 @@ class AgentRunRow(Base):
     # Tracing (0012): the llm.call span this run was recorded under.
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     span_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Deal-intake extraction (0004): private to the intake's creator while deal_id is NULL;
+    # re-pointed to the deal when the intake is confirmed.
+    intake_id: Mapped[int | None] = mapped_column(ForeignKey("deal_intake.id"), index=True,
+                                                  nullable=True)
 
 
 class WallRow(Base):
@@ -669,6 +680,8 @@ class DocChunkRow(Base):
         CheckConstraint("kind IN ('text', 'table')", name="ck_doc_chunk_kind"),
         CheckConstraint("page_from IS NULL OR page_to IS NULL OR page_from <= page_to",
                         name="ck_doc_chunk_pages"),
+        CheckConstraint("deal_id IS NOT NULL OR intake_id IS NOT NULL",
+                        name="ck_doc_chunk_deal_or_intake"),
         Index("ix_doc_chunk_embedding_hnsw", "embedding", postgresql_using="hnsw",
               postgresql_with={"m": 16, "ef_construction": 64},
               postgresql_ops={"embedding": "vector_cosine_ops"}),
@@ -676,7 +689,10 @@ class DocChunkRow(Base):
     )
     id: Mapped[int] = _pk()
     document_id: Mapped[int] = mapped_column(ForeignKey("document.id"), index=True)
-    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), index=True,
+                                                nullable=True)
+    intake_id: Mapped[int | None] = mapped_column(ForeignKey("deal_intake.id"), index=True,
+                                                  nullable=True)
     version: Mapped[int] = mapped_column(Integer)
     chunk_index: Mapped[int] = mapped_column(Integer)
     text: Mapped[str] = mapped_column(Text)
@@ -700,10 +716,15 @@ class IndexJobRow(Base):
         CheckConstraint("status IN ('queued', 'running', 'done', 'dead_letter')",
                         name="ck_index_job_status"),
         Index("ix_index_job_runnable", "status", "not_before"),
+        CheckConstraint("deal_id IS NOT NULL OR intake_id IS NOT NULL",
+                        name="ck_index_job_deal_or_intake"),
     )
     id: Mapped[int] = _pk()
     document_id: Mapped[int] = mapped_column(ForeignKey("document.id"), unique=True)
-    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), index=True,
+                                                nullable=True)
+    intake_id: Mapped[int | None] = mapped_column(ForeignKey("deal_intake.id"), index=True,
+                                                  nullable=True)
     version: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16), default="queued", server_default="queued")
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -745,13 +766,18 @@ class EmbedRunRow(Base):
 
 
 class DealIntakeRow(Base):
-    """A deal being assembled before it exists (phase 3; no API yet). Private to its
-    creator (RLS) until confirmed into a deal."""
+    """A deal being assembled before it exists (phase 3, 0004_deal_intake): staged documents,
+    the fields extracted from them, conflicts and the creator's edits. Private to its creator
+    (RLS) until confirmed into a deal. The extraction queue lives on the row itself (one
+    extraction per intake), claimed with FOR UPDATE SKIP LOCKED like index_job."""
     __tablename__ = "deal_intake"
     __table_args__ = (
         _one_of("status", IntakeStatus), _one_of("transaction_class", TransactionClass),
         CheckConstraint("(status = 'confirmed') = (confirmed_deal_id IS NOT NULL)",
                         name="ck_intake_confirmed_deal"),
+        CheckConstraint("extract_status IN ('idle', 'queued', 'running', 'done', "
+                        "'dead_letter')", name="ck_intake_extract_status"),
+        Index("ix_deal_intake_extract_runnable", "extract_status", "extract_not_before"),
     )
     id: Mapped[int] = _pk()
     created_by: Mapped[str] = mapped_column(String(64), index=True)
@@ -765,3 +791,23 @@ class DealIntakeRow(Base):
                                                           nullable=True)
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _created_at()
+    # Typed by the creator before any extraction: company_name, cin, transaction_class_hint.
+    hints: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    external_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Live progress shown while files are indexed and fields extracted.
+    progress: Mapped[dict] = mapped_column(JSONB, default=dict,
+                                           server_default=text("'{}'::jsonb"))
+    extract_status: Mapped[str] = mapped_column(String(16), default="idle",
+                                                server_default="idle")
+    extract_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    extract_not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                                nullable=True)
+    extract_claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    extract_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                                nullable=True)
+    extract_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # started_at, finished_at, duration_ms, model, llm_used, warnings of the last extraction.
+    extract_meta: Mapped[dict] = mapped_column(JSONB, default=dict,
+                                               server_default=text("'{}'::jsonb"))
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    span_id: Mapped[str | None] = mapped_column(String(16), nullable=True)

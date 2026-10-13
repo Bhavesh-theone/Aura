@@ -171,6 +171,24 @@ Legend: **[LLM]** = the model decides · **[Code]** = deterministic code decides
 
 ---
 
+### The intake extractor (deal intake, phase 3)
+
+A second, non-agent model path: it fills a new deal's form from its documents and never acts. Its runs are `agent_run` rows with archetype `intake_extractor` (lineage, budget, retries) but no agent capability or autonomy metric reads them; a person reviews every value before anything is created.
+
+1. **Trigger.** `POST /api/intakes` (dealmaker, analyst; `Capability.CREATE_DEAL`) makes a private draft; `POST /api/intakes/{id}/files` stages documents (`document.deal_id` NULL, `intake_id` set) and queues them on the normal `index_job` queue, and marks the intake's extraction `queued` (`core/services/intake.py: stage_files`). Audit `intake_created`, `intake_file_staged` (ids only).
+2. **[Code] Wait for indexing.** The intake worker (`worker/intake.py`) claims an intake only when none of its files is still `pending` (`SqlIntakeRepository.claim_next_extraction`, `FOR UPDATE SKIP LOCKED`).
+3. **[Code] Deterministic extraction** (`core/services/intake_extraction.py: deterministic_candidates`): identifier regexes (CIN/PAN/GSTIN/LLPIN), registered names, `Project <Name>`, tenor/coupon/law/ticket/security/stake sentences, weighted class signals, regulatory keywords, and financial rows from table grids (latest actual FY column, unit from table/heading/document → whole rupees). Each candidate cites its chunk and page.
+4. **[Code] Retrieval per group.** Hybrid search (`core/services/search.py`) over the intake's own chunks (`SqlChunkRepository(intake_id=…)`, RLS: creator only) with group-specific queries; table chunks first for financials. The read transaction is committed before any model call.
+5. **[Code] Context.** Each passage is screened (`injection_policy.screen`; flagged ones are left out with a warning), tagged `[C1]…[Cn]`, cut to `AURA_INTAKE_CONTEXT_CHARS` and wrapped once as untrusted data.
+6. **[LLM] One field group per call** (identity, transaction, parties, financials, terms, regulatory, class profile, mandate): template `intake.<group>@v1` (registry + manifest), `qwen3.5:4b`, temperature 0, `think: false`, Ollama structured output (`format` = the group's JSON Schema, `agents/llm/intake_extractor.py`), JSON repair as a backstop. A group whose fields the deterministic pass already filled above the threshold is skipped.
+7. **[Code] Validation** (`core/services/intake_fields.py: normalise_value`): identifier formats, ₹ crore/lakh/Cr/L → INR, enums, day-first dates, ranges, EBITDA/PAT ≤ revenue. A failing model value is dropped and its reason shown.
+8. **[Code] Confidence and citations.** Model self-report × validation multiplier (quote in the cited passage and holding the value: 1.0; one of the two: 0.85; neither: 0.6), capped at 0.9 for model-only values; +0.03 per agreeing document; deterministic + model agreement +0.03.
+9. **[Code] Merge and conflicts** (`merge_field`): agreeing candidates pool citations; disagreeing ones (numbers beyond 0.5%, texts that are not paraphrases) become a conflict a person must resolve. Below `AURA_INTAKE_CONFIDENCE_THRESHOLD` a field needs review; valuation inputs need 0.95 or confirmation.
+10. **[Code] Write-back.** Under the claim (`hold_extraction`) the result is folded into the intake without losing the creator's edits (`apply_extraction`), the collected `agent_run` rows are written with it, audit `intake_extracted`, and an `entity_changed {kind: intake}` event goes to the creator only (`EventHub.recipients` honours `recipient`).
+11. **[Code] Reliability.** Transient model errors retry inside `RunRecorder` and then across attempts with backoff; the last attempt runs deterministically (no model) so a form always arrives; stale claims are recovered after the lease; a permanent error dead-letters (`intake_extraction_failed`). Budget: `AURA_INTAKE_MAX_LLM_CALLS`, `AURA_INTAKE_MAX_SECONDS`, the process-wide model slot.
+12. **Human in the loop.** `PATCH /api/intakes/{id}` (autosave): edits become source `user`, accepts, conflict picks. `POST …/confirm` re-validates everything (required fields, formats, JSON Schema of the class profile, unresolved conflicts, unaccepted low-confidence values → 422 `field_errors`), then calls `create_deal`, `create_party`/`link_party`, `create_mandate`, `set_regulatory_flags` and re-points documents, chunks, index jobs and model runs in one unit of work; audit `intake_confirmed` with the auto-filled/changed counts behind the intake override rate (`GET /api/metrics → evaluation.intake`).
+13. **Evaluation.** `python -m aura.evals.run --capability intake` (`evals/intake.py`, golden `evals/golden/intake.json`): per-field and per-group accuracy, citation validity, conflict-probe detection, time; stored as `eval_run` capability `intake`, never used for autonomy.
+
 ## 3. Who decides what
 
 | The model decides | Code decides |

@@ -306,4 +306,8 @@ def start_worker(orchestrator, events: EventPublisher) -> threading.Event:
     from aura.worker.indexer import _loop as index_loop
     threading.Thread(target=index_loop, args=(events, stop), daemon=True,
                      name="aura-indexer").start()
+    # Deal-intake extraction (aura.worker.intake): its own thread, so a minutes-long model
+    # read of an intake never holds up agent segments or indexing.
+    from aura.worker.intake import start_intake_worker
+    start_intake_worker(events, stop)
     return stop

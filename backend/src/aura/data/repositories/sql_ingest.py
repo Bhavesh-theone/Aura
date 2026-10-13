@@ -25,19 +25,24 @@ def _chunk(row: DocChunkRow) -> StoredChunk:
                        version=row.version, chunk_index=row.chunk_index, text=row.text,
                        kind=row.kind, page_from=row.page_from, page_to=row.page_to,
                        embedding_model=row.embedding_model, meta=dict(row.meta or {}),
-                       created_at=row.created_at)
+                       created_at=row.created_at, intake_id=row.intake_id)
 
 
 class SqlChunkRepository:
-    def __init__(self, session: Session, viewer: Viewer):
-        self.s, self.viewer = session, bind_viewer(session, viewer)
+    """Chunks of a deal's documents, or - built with intake_id - of the documents staged on
+    one deal intake (search and retrieval then filter on the intake instead of the deal;
+    row-level security still decides what the viewer may read)."""
 
-    def replace_for_document(self, document_id: int, deal_id: int, version: int,
+    def __init__(self, session: Session, viewer: Viewer, intake_id: int | None = None):
+        self.s, self.viewer = session, bind_viewer(session, viewer)
+        self.intake_id = intake_id
+
+    def replace_for_document(self, document_id: int, deal_id: int | None, version: int,
                              chunks: list[StoredChunk]) -> int:
         """Delete the document's chunks and insert these, in the caller's transaction."""
         self.s.execute(delete(DocChunkRow).where(DocChunkRow.document_id == document_id))
         self.s.add_all([DocChunkRow(
-            document_id=document_id, deal_id=deal_id, version=version,
+            document_id=document_id, deal_id=deal_id, intake_id=c.intake_id, version=version,
             chunk_index=c.chunk_index, text=c.text, kind=c.kind, page_from=c.page_from,
             page_to=c.page_to, embedding=c.embedding, embedding_model=c.embedding_model,
             meta=c.meta or {}) for c in chunks])
@@ -45,6 +50,8 @@ class SqlChunkRepository:
         return len(chunks)
 
     def _scoped(self, stmt):
+        if self.intake_id is not None:  # the intake's own rows; RLS keeps them its creator's
+            return stmt
         return walled(stmt, self.viewer, DocChunkRow.deal_id)
 
     def list_for_document(self, document_id: int, offset: int = 0,
@@ -73,11 +80,12 @@ class SqlChunkRepository:
                 DocChunkRow.version, DocChunkRow.chunk_index, DocChunkRow.text,
                 DocChunkRow.kind, DocChunkRow.page_from, DocChunkRow.page_to)
 
-    def _current(self, stmt, deal_id: int):
-        """Chunks of the deal's documents, current version only."""
+    def _current(self, stmt, deal_id: int | None):
+        """Chunks of the deal's (or the intake's) documents, current version only."""
+        scope = (DocChunkRow.intake_id == self.intake_id) if self.intake_id is not None \
+            else (DocChunkRow.deal_id == deal_id)
         return self._scoped(stmt.join(DocumentRow, DocumentRow.id == DocChunkRow.document_id)
-                            .where(DocChunkRow.deal_id == deal_id,
-                                   DocChunkRow.version == DocumentRow.current_version))
+                            .where(scope, DocChunkRow.version == DocumentRow.current_version))
 
     def vector_search(self, deal_id: int, vector: list[float], limit: int,
                       ef_search: int = 80) -> list[ChunkHit]:
@@ -126,7 +134,7 @@ def _job(row: IndexJobRow) -> IndexJob:
                     claimed_at=row.claimed_at, last_error=row.last_error,
                     requested_by=row.requested_by, trace_id=row.trace_id,
                     span_id=row.span_id, created_at=row.created_at,
-                    updated_at=row.updated_at)
+                    updated_at=row.updated_at, intake_id=row.intake_id)
 
 
 class SqlIndexQueue:
@@ -136,15 +144,16 @@ class SqlIndexQueue:
     def __init__(self, session: Session, viewer: Viewer):
         self.s, self.viewer = session, bind_viewer(session, viewer)
 
-    def enqueue(self, document_id: int, deal_id: int, version: int, requested_by: str,
-                trace_id: str | None, span_id: str | None) -> IndexJob:
+    def enqueue(self, document_id: int, deal_id: int | None, version: int,
+                requested_by: str, trace_id: str | None, span_id: str | None,
+                intake_id: int | None = None) -> IndexJob:
         now = utcnow()
         values = {"version": version, "status": "queued", "attempts": 0, "not_before": None,
                   "claimed_by": None, "claimed_at": None, "last_error": None,
                   "requested_by": requested_by, "trace_id": trace_id, "span_id": span_id,
                   "updated_at": now}
         stmt = insert(IndexJobRow).values(document_id=document_id, deal_id=deal_id,
-                                          **values)
+                                          intake_id=intake_id, **values)
         stmt = stmt.on_conflict_do_update(index_elements=[IndexJobRow.document_id],
                                           set_=values).returning(IndexJobRow.id)
         job_id = self.s.execute(stmt).scalar_one()
