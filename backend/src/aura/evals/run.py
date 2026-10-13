@@ -3,11 +3,17 @@
     uv run python -m aura.evals.run --capability classify_document|extract_financials|
         draft_email|all [--orchestrator stub|crew] [--limit N] [--cases ID,ID]
     uv run python -m aura.evals.run --capability retrieval [--embedder ollama|fake]
+        [--scan-vlm off|fallback|always]
+    uv run python -m aura.evals.run --capability parsing [--pdf-parser pymupdf|docling|both]
+        [--scan-vlm off|fallback|always]
 
 'retrieval' scores the hybrid search (aura.evals.retrieval): recall@5 and MRR over
 evals/golden/retrieval.jsonl on the fixture deal pack, with the real Ollama embedder when it
-answers (--embedder fake: deterministic hash vectors). It is not an agent capability: it
-never touches autonomy.
+answers (--embedder fake: deterministic hash vectors), over the Nilgiri and Kaveri fixture packs
+parsed by the configured parser (scan VLM off unless --scan-vlm is given). 'parsing'
+(aura.evals.parsing) scores the PDF parsers on the Kaveri fixtures against their ground truth
+(default: both parsers when Docling is installed, scan VLM off). Neither is an agent
+capability: they never touch autonomy.
 
 Each golden case becomes the same context a job would get (screened and wrapped by
 context_assembly), goes through Orchestrator.run, and is scored deterministically
@@ -23,6 +29,7 @@ import hashlib
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from sqlalchemy import inspect
@@ -61,7 +68,7 @@ def load_golden(capability: str, limit: int | None = None,
 
 def run_retrieval(args) -> int:
     from aura.data.engine import SessionLocal
-    from aura.evals.retrieval import evaluate_retrieval
+    from aura.evals.retrieval import ALL_PACKS, evaluate_retrieval
     from aura.ingest.embedder import FakeEmbedder, OllamaEmbedder, embedder_available
     s = get_settings()
     if args.embedder == "fake":
@@ -76,10 +83,13 @@ def run_retrieval(args) -> int:
                 return 2
             print(f"Ollama/{s.embed_model} unavailable: using the fake embedder")
             embedder = FakeEmbedder()
+    from aura.ingest.parsers import FormatRegistryParser, limits_from_settings
+    limits = replace(limits_from_settings(), scan_vlm=args.scan_vlm or "off")
     cases, digest = load_golden("retrieval", args.limit)
     with SessionLocal() as session:
         run = evaluate_retrieval(session, embedder, cases, digest,
-                                 s.eval_threshold_retrieval)
+                                 s.eval_threshold_retrieval,
+                                 parser=FormatRegistryParser(limits), packs=ALL_PACKS)
     m = run.metrics
     for case in run.cases:
         rank = case.detail.get("first_relevant_rank")
@@ -90,11 +100,71 @@ def run_retrieval(args) -> int:
     print(f"retrieval  model={run.model_id}  n={run.n_cases}  recall@5={m['recall_at_5']:.2f}"
           f"  MRR={m['mrr']:.3f}  index={m['index_seconds']}s  "
           f"mean query={m['mean_query_ms']} ms  chunks={m['chunks']}  "
-          f"ocr={','.join(m['ocr_used']) or '-'}  run #{run.id}")
+          f"ocr={','.join(m['ocr_used']) or '-'}  pdf_parser={limits.pdf_parser}  "
+          f"scan_vlm={limits.scan_vlm}  run #{run.id}")
+    for name, sub in m.get("subsets", {}).items():
+        print(f"  subset {name:<8} n={sub['n']:<3} recall@5={sub['recall_at_5']:.2f}  "
+              f"MRR={sub['mrr']:.3f}")
     if not run.passed:
         print(f"BELOW THRESHOLD: retrieval recall@5 {run.score:.2f} < {run.threshold:.2f}")
         return 1
     return 0
+
+
+def run_parsing(args) -> int:
+    """Parse and score the Kaveri fixtures with one or both PDF parsers. Stored as eval_run
+    rows (capability 'parsing') when the database is up; exit 1 when the parser the settings
+    would use scores below eval_threshold_parsing."""
+    from aura.evals.parsing import evaluate_parser, load_ground_truth, report, to_eval_run
+    from aura.ingest.docling_parser import docling_available
+    from aura.ingest.parsers import resolve_pdf_parser
+    s = get_settings()
+    configured = resolve_pdf_parser(s.pdf_parser, s.docling_artifacts)
+    choice = args.pdf_parser or ("both" if docling_available(s.docling_artifacts)
+                                 else "pymupdf")
+    parsers = ["pymupdf", "docling"] if choice == "both" else [choice]
+    gating = configured if configured in parsers else parsers[0]
+    scan_vlm = args.scan_vlm or "off"
+    threshold = s.eval_threshold_parsing
+    gt, digest = load_ground_truth()
+    runs = {}
+    for name in parsers:
+        started = utcnow()
+        result = evaluate_parser(name, scan_vlm, gt)
+        print(report(name, result))
+        runs[name] = to_eval_run(name, scan_vlm, result, digest, threshold, started)
+    stored = _store_runs(list(runs.values()))
+    for name, run in runs.items():
+        print(f"parsing  parser={name:<8} scan_vlm={scan_vlm}  score={run.score:.3f}  "
+              f"thresh={threshold:.2f}  {'pass' if run.passed else 'FAIL'}"
+              f"{'  (gating: settings use it)' if name == gating else ''}"
+              f"{f'  run #{run.id}' if stored else ''}")
+    if not stored:
+        print("(not stored: the database or its eval tables are not available)")
+    gate = runs[gating]
+    if not gate.passed:
+        print(f"BELOW THRESHOLD: parsing ({gating}) {gate.score:.3f} < {threshold:.2f}")
+        return 1
+    return 0
+
+
+def _store_runs(runs: list[EvalRun]) -> bool:
+    """Store eval runs when the database has the eval tables (sets their ids)."""
+    try:
+        from aura.data.engine import SessionLocal, engine
+        from aura.data.repositories.sql_harness import SqlEvalRepository
+        if not inspect(engine).has_table("eval_run"):
+            return False
+        with SessionLocal() as session:
+            repo = SqlEvalRepository(session)
+            for run in runs:
+                run.id = repo.add_run(run).id
+            session.commit()
+        return True
+    except Exception as exc:  # the scores are still printed; storage is best effort
+        print(f"could not store the parsing runs: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
+        return False
 
 
 def threshold_for(capability: str) -> float:
@@ -279,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aura.evals.run",
                                      description="Score capabilities against golden sets.")
     parser.add_argument("--capability", required=True,
-                        choices=[*EVAL_CAPABILITIES, "retrieval", "all"])
+                        choices=[*EVAL_CAPABILITIES, "retrieval", "parsing", "all"])
     parser.add_argument("--orchestrator", choices=["stub", "crew"], default="stub")
     parser.add_argument("--limit", type=int, default=None, help="cases per capability")
     parser.add_argument("--cases", default=None,
@@ -287,7 +357,14 @@ def main(argv: list[str] | None = None) -> int:
                              "partial run is stored but not used for autonomy")
     parser.add_argument("--embedder", choices=["auto", "ollama", "fake"], default="auto",
                         help="retrieval only: auto uses Ollama when it answers")
+    parser.add_argument("--pdf-parser", choices=["pymupdf", "docling", "both"], default=None,
+                        help="parsing only: default both when Docling is installed")
+    parser.add_argument("--scan-vlm", choices=["off", "fallback", "always"], default=None,
+                        help="parsing and retrieval: vision model for scanned pages "
+                             "(default off)")
     args = parser.parse_args(argv)
+    if args.capability == "parsing":
+        return run_parsing(args)
 
     from aura.data.engine import SessionLocal, engine
     if not inspect(engine).has_table("eval_run"):

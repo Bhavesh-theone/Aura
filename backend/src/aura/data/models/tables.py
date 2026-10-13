@@ -720,10 +720,12 @@ class IndexJobRow(Base):
 
 class EmbedRunRow(Base):
     """Lineage of embedding calls: one row per batch (not per chunk, and not in agent_run,
-    whose rows count against the daily model budget and the autonomy metrics)."""
+    whose rows count against the daily model budget and the autonomy metrics). Kind
+    'vlm_page' is one scanned PDF page read by the vision model while indexing (batch_size 1,
+    input_chars = characters transcribed)."""
     __tablename__ = "embed_run"
     __table_args__ = (CheckConstraint("status IN ('ok', 'error')", name="ck_embed_run_status"),
-                      CheckConstraint("kind IN ('document', 'query')",
+                      CheckConstraint("kind IN ('document', 'query', 'vlm_page')",
                                       name="ck_embed_run_kind"))
     id: Mapped[int] = _pk()
     deal_id: Mapped[int | None] = mapped_column(ForeignKey("deals.id"), nullable=True,

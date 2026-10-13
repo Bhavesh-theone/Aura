@@ -1,7 +1,11 @@
 """Document parsers: the DocumentParser port for every format Aura reads.
 
-    PDF   PyMuPDF, per-page text with font-size headings; pages with no text layer are read
-          by OCR (RapidOCR, local ONNX models) up to ocr_max_pages
+    PDF   Docling (aura.ingest.docling_parser: layout, table cell grids, OCR) when installed
+          and AURA_PDF_PARSER allows it; otherwise, or when Docling fails, times out or the
+          PDF is over its page cap, PyMuPDF: per-page text with headings by size or bold, and
+          pages with no text layer read by OCR (RapidOCR, local ONNX models; the render is
+          deskewed and the boxes grouped into lines) up to ocr_max_pages. Either way, scanned
+          pages can get a second reading by a local vision model (aura.ingest.vlm).
     DOCX  python-docx: paragraphs, headings (Heading/Title styles) and tables, in order
     XLSX  openpyxl: each sheet's used range as a table (header row kept)
     CSV   csv: one table
@@ -50,11 +54,19 @@ MAX_ATTACHMENT_DEPTH = 2
 
 @dataclass(frozen=True)
 class ParserLimits:
+    """Limits and PDF routing. The defaults are the plain PyMuPDF path with no vision model
+    (what unit tests want); limits_from_settings() gives the configured ones."""
     max_upload_mb: int = 25
     max_pages: int = 300
     ocr_enabled: bool = True
     ocr_max_pages: int = 50
     ocr_min_chars: int = 25
+    pdf_parser: str = "pymupdf"  # pymupdf | docling (settings' 'auto' is resolved here)
+    docling_artifacts: str | None = None
+    docling_max_pages: int = 120
+    docling_timeout_s: float = 600.0
+    scan_vlm: str = "off"  # off | fallback | always
+    vlm_max_pages: int = 5
 
     @property
     def max_bytes(self) -> int:
@@ -66,7 +78,22 @@ def limits_from_settings() -> ParserLimits:
     s = get_settings()
     return ParserLimits(max_upload_mb=s.max_upload_mb, max_pages=s.max_pages,
                         ocr_enabled=s.ocr_enabled, ocr_max_pages=s.ocr_max_pages,
-                        ocr_min_chars=s.ocr_min_chars)
+                        ocr_min_chars=s.ocr_min_chars,
+                        pdf_parser=resolve_pdf_parser(s.pdf_parser, s.docling_artifacts),
+                        docling_artifacts=s.docling_artifacts,
+                        docling_max_pages=s.docling_max_pages,
+                        docling_timeout_s=s.docling_timeout_s, scan_vlm=s.scan_vlm,
+                        vlm_max_pages=s.vlm_max_pages)
+
+
+def resolve_pdf_parser(choice: str, artifacts: str | None) -> str:
+    """'auto' -> 'docling' when the optional dependency and its models are installed, else
+    'pymupdf'. An explicit 'docling' stays (a missing install then falls back per document,
+    with a warning saying why)."""
+    if choice != "auto":
+        return choice
+    from aura.ingest.docling_parser import docling_available
+    return "docling" if docling_available(artifacts) else "pymupdf"
 
 
 def extension(filename: str) -> str:
@@ -233,7 +260,8 @@ class _Ocr:
     _failed: str | None = None
 
     @classmethod
-    def read(cls, png: bytes) -> str:
+    def boxes(cls, png: bytes) -> list:
+        """RapidOCR's raw result: [[box (4 points), text, score], ...]."""
         with cls._lock:
             if cls._engine is None and cls._failed is None:
                 try:
@@ -244,8 +272,124 @@ class _Ocr:
             if cls._engine is None:
                 raise RuntimeError(f"OCR unavailable ({cls._failed})")
             result, _ = cls._engine(png)
-        lines = sorted(result or [], key=lambda r: (round(r[0][0][1] / 12), r[0][0][0]))
-        return "\n".join(r[1] for r in lines if r[1] and r[2] >= 0.5)
+        return result or []
+
+    @classmethod
+    def read(cls, png: bytes) -> str:
+        return ocr_lines_text(cls.boxes(png))
+
+
+def _box(entry) -> tuple[float, float, float, float, str] | None:
+    try:
+        points, text, score = entry[0], entry[1], float(entry[2])
+    except (TypeError, ValueError, IndexError):
+        return None
+    text = (text or "").strip()
+    if not text or score < 0.5:
+        return None
+    xs, ys = [float(p[0]) for p in points], [float(p[1]) for p in points]
+    return min(xs), min(ys), max(xs), max(ys), text
+
+
+def ocr_lines(result: list) -> list[list[tuple]]:
+    """Group OCR boxes into text lines by vertical overlap (not fixed-height buckets, which
+    scatter the rows of a slightly rotated table), each line left to right. A box joins the
+    line it overlaps by at least half its height (the line's mean top and bottom)."""
+    boxes = sorted((b for b in (_box(e) for e in result) if b),
+                   key=lambda b: ((b[1] + b[3]) / 2, b[0]))
+    lines: list[dict] = []
+    for b in boxes:
+        height = max(1.0, b[3] - b[1])
+        best, best_overlap = None, 0.0
+        for line in lines[-4:]:
+            top, bottom = line["top"] / line["n"], line["bottom"] / line["n"]
+            overlap = min(bottom, b[3]) - max(top, b[1])
+            if overlap >= 0.5 * min(height, bottom - top) and overlap > best_overlap:
+                best, best_overlap = line, overlap
+        if best is None:
+            best = {"top": 0.0, "bottom": 0.0, "n": 0, "boxes": []}
+            lines.append(best)
+        best["boxes"].append(b)
+        best["top"] += b[1]
+        best["bottom"] += b[3]
+        best["n"] += 1
+    lines.sort(key=lambda ln: (ln["top"] + ln["bottom"]) / (2 * ln["n"]))
+    return [sorted(ln["boxes"], key=lambda b: b[0]) for ln in lines]
+
+
+def _join_line(boxes: list[tuple]) -> str:
+    """Boxes of one line joined left to right: a space between boxes, none where two boxes
+    touch (one word cut in two)."""
+    out = ""
+    prev = None
+    for b in boxes:
+        if prev is not None:
+            char_w = max(1.0, (prev[2] - prev[0]) / max(1, len(prev[4])))
+            out += "" if b[0] - prev[2] < 0.25 * char_w else " "
+        out += b[4]
+        prev = b
+    return out
+
+
+def ocr_lines_text(result: list) -> str:
+    """OCR boxes as text: one line per text line, a blank line where the vertical gap is
+    larger than one and a half line heights (a paragraph break)."""
+    lines = ocr_lines(result)
+    out: list[str] = []
+    prev_bottom = None
+    heights = sorted(max(1.0, max(b[3] for b in ln) - min(b[1] for b in ln)) for ln in lines)
+    typical = heights[len(heights) // 2] if heights else 0.0
+    for ln in lines:
+        top, bottom = min(b[1] for b in ln), max(b[3] for b in ln)
+        if prev_bottom is not None and top - prev_bottom > 1.5 * typical:
+            out.append("")
+        out.append(_join_line(ln))
+        prev_bottom = bottom
+    return "\n".join(out)
+
+
+def estimate_skew(gray, max_angle: float = 5.0) -> float:
+    """Skew of a page image in degrees (positive: text lines fall to the right), by the
+    projection profile: the shear that makes the row sums of ink most peaked. numpy only."""
+    import numpy as np
+    ink = np.asarray(gray) < 128
+    ys, xs = np.nonzero(ink)
+    if len(ys) < 200:
+        return 0.0
+    if len(ys) > 400_000:  # plenty for a profile; keep it fast
+        pick = np.random.default_rng(0).choice(len(ys), 400_000, replace=False)
+        ys, xs = ys[pick], xs[pick]
+    xs = xs - xs.mean()
+
+    def score(angle: float) -> float:
+        yy = np.round(ys - xs * np.tan(np.radians(angle))).astype(np.int64)
+        hist = np.bincount(yy - yy.min())
+        return float(np.square(hist.astype(np.float64)).sum())
+
+    coarse = np.arange(-max_angle, max_angle + 1e-9, 0.25)
+    best = max(coarse, key=score)
+    fine = np.arange(best - 0.25, best + 0.25 + 1e-9, 0.05)
+    return round(float(max(fine, key=score)), 2)
+
+
+def render_for_ocr(page, dpi: int = 200, min_skew: float = 0.3) -> tuple[bytes, float]:
+    """The page as PNG for OCR, straightened when the scan is skewed (more than min_skew
+    degrees). Returns (png, angle corrected)."""
+    import fitz
+    import numpy as np
+    angle = 0.0
+    try:
+        probe = page.get_pixmap(dpi=100, colorspace=fitz.csGRAY)
+        gray = np.frombuffer(probe.samples, dtype=np.uint8).reshape(probe.height,
+                                                                     probe.stride)
+        angle = estimate_skew(gray[:, :probe.width])
+    except Exception:  # pragma: no cover - a page MuPDF cannot render is read unrotated
+        angle = 0.0
+    zoom = dpi / 72.0
+    if abs(angle) >= min_skew:
+        matrix = fitz.Matrix(zoom, zoom).prerotate(-angle)
+        return page.get_pixmap(matrix=matrix).tobytes("png"), angle
+    return page.get_pixmap(dpi=dpi).tobytes("png"), 0.0
 
 
 def ocr_available() -> bool:
@@ -258,81 +402,211 @@ def ocr_available() -> bool:
 
 # ------------------------------------------------------------------ formats
 
-def parse_pdf(content: bytes, limits: ParserLimits) -> ParsedDocument:
+_BOLD = 16  # PyMuPDF span flag
+
+
+def _open_pdf(content: bytes, limits: ParserLimits):
     import fitz  # PyMuPDF
     try:
         doc = fitz.open(stream=content, filetype="pdf")
     except Exception as exc:
         raise CorruptDocument(f"the PDF cannot be opened ({exc})") from exc
-    with doc:
-        if doc.needs_pass:
-            raise CorruptDocument("the PDF is password-protected")
-        if doc.page_count > limits.max_pages:
-            raise DocumentTooLarge(f"{doc.page_count} pages is over the {limits.max_pages}-page "
-                                   "limit")
-        warnings: list[str] = []
-        pages = []
-        sizes: dict[float, int] = {}
-        for page in doc:
-            try:
-                data = page.get_text("dict", flags=0)
-            except Exception as exc:
-                warnings.append(f"page {page.number + 1}: text could not be read ({exc})")
-                data = {"blocks": []}
-            found = []
-            for block in data.get("blocks", []):
-                if block.get("type", 0) != 0:
+    if doc.needs_pass:
+        doc.close()
+        raise CorruptDocument("the PDF is password-protected")
+    if doc.page_count > limits.max_pages:
+        count = doc.page_count
+        doc.close()
+        raise DocumentTooLarge(f"{count} pages is over the {limits.max_pages}-page limit")
+    return doc
+
+
+def image_only_pages(doc, min_chars: int) -> list[int]:
+    """Pages (1-based) with fewer than min_chars characters in their text layer."""
+    out = []
+    for page in doc:
+        try:
+            chars = len(page.get_text("text").strip())
+        except Exception:
+            chars = 0
+        if chars < min_chars:
+            out.append(page.number + 1)
+    return out
+
+
+def _heading_level(size: float, body: float) -> int:
+    ratio = size / body if body else 1.0
+    return 1 if ratio >= 1.5 else 2 if ratio >= 1.25 else 3
+
+
+def parse_pdf(content: bytes, limits: ParserLimits) -> ParsedDocument:
+    with _open_pdf(content, limits) as doc:
+        return _parse_pdf_pymupdf(doc, limits)
+
+
+def _parse_pdf_pymupdf(doc, limits: ParserLimits) -> ParsedDocument:
+    warnings: list[str] = []
+    pages = []
+    sizes: dict[float, int] = {}
+    for page in doc:
+        try:
+            data = page.get_text("dict", flags=0)
+        except Exception as exc:
+            warnings.append(f"page {page.number + 1}: text could not be read ({exc})")
+            data = {"blocks": []}
+        found = []  # per text block: [(line text, size, bold, line bbox), ...]
+        for block in data.get("blocks", []):
+            if block.get("type", 0) != 0:
+                continue
+            lines = []
+            for line in block.get("lines", []):
+                spans = [s for s in line.get("spans", []) if s.get("text", "").strip()]
+                if not spans:
                     continue
-                lines, size = [], 0.0
-                for line in block.get("lines", []):
-                    spans = [s for s in line.get("spans", []) if s.get("text", "").strip()]
-                    if not spans:
-                        continue
-                    lines.append("".join(s["text"] for s in line["spans"]).strip())
-                    for s in spans:
-                        rounded = round(s.get("size", 0), 1)
-                        sizes[rounded] = sizes.get(rounded, 0) + len(s["text"])
-                        size = max(size, rounded)
-                if lines:
-                    found.append(("\n".join(lines), size))
-            pages.append(found)
-        body_size = max(sizes, key=lambda k: sizes[k]) if sizes else 0
-        blocks: list[Block] = []
-        ocr_pages = 0
-        for number, found in enumerate(pages, start=1):
-            chars = sum(len(t.strip()) for t, _ in found)
-            if chars < limits.ocr_min_chars:
-                if not limits.ocr_enabled:
-                    warnings.append(f"page {number}: no text layer (OCR is off)")
-                elif ocr_pages >= limits.ocr_max_pages:
-                    warnings.append(f"page {number}: no text layer; OCR limit of "
-                                    f"{limits.ocr_max_pages} pages reached")
-                else:
-                    ocr_pages += 1
-                    try:
-                        pix = doc[number - 1].get_pixmap(dpi=200)
-                        text = _Ocr.read(pix.tobytes("png"))
-                    except Exception as exc:
-                        warnings.append(f"page {number}: OCR failed ({exc})")
-                        text = ""
-                    if text.strip():
-                        warnings.append(f"page {number}: text recognised by OCR")
-                        blocks += _paragraph_blocks(text, number)
-                        continue
-                    if not found:
-                        warnings.append(f"page {number}: no text found")
-            for text, size in found:
-                one_line = "\n" not in text.strip() and len(text) <= 120
-                if body_size and size >= body_size * 1.2 and one_line and \
-                        re.search(r"[A-Za-z]", text):
-                    blocks.append(Block("heading", _clean(text), number))
-                else:
-                    blocks.append(Block("text", _clean(text), number))
-        meta = {k: v for k, v in (doc.metadata or {}).items() if v}
-        return ParsedDocument(blocks=blocks, metadata=meta, page_count=doc.page_count,
-                              ocr_used=ocr_pages > 0 and any("OCR" in w and "recognised" in w
-                                                             for w in warnings),
-                              warnings=warnings)
+                size, bold = 0.0, True
+                for s in spans:
+                    rounded = round(s.get("size", 0), 1)
+                    sizes[rounded] = sizes.get(rounded, 0) + len(s["text"])
+                    size = max(size, rounded)
+                    bold = bold and bool(s.get("flags", 0) & _BOLD or
+                                         "bold" in str(s.get("font", "")).lower())
+                lines.append(("".join(s["text"] for s in line["spans"]).strip(), size, bold,
+                              tuple(line.get("bbox") or (0, 0, 0, 0))))
+            if lines:
+                found.append(lines)
+        pages.append(found)
+    body_size = max(sizes, key=lambda k: sizes[k]) if sizes else 0
+    blocks: list[Block] = []
+    ocr_pages = 0
+    for number, found in enumerate(pages, start=1):
+        chars = sum(len(ln[0]) for lines in found for ln in lines)
+        if chars < limits.ocr_min_chars:
+            if not limits.ocr_enabled:
+                warnings.append(f"page {number}: no text layer (OCR is off)")
+            elif ocr_pages >= limits.ocr_max_pages:
+                warnings.append(f"page {number}: no text layer; OCR limit of "
+                                f"{limits.ocr_max_pages} pages reached")
+            else:
+                ocr_pages += 1
+                try:
+                    png, angle = render_for_ocr(doc[number - 1])
+                    text = _Ocr.read(png)
+                    if angle:
+                        warnings.append(f"page {number}: scan straightened by "
+                                        f"{angle:+.1f} degrees before OCR")
+                except Exception as exc:
+                    warnings.append(f"page {number}: OCR failed ({exc})")
+                    text = ""
+                if text.strip():
+                    warnings.append(f"page {number}: text recognised by OCR")
+                    for b in _paragraph_blocks(text, number):
+                        b.meta["source"] = "ocr"
+                        blocks.append(b)
+                    continue
+                if not found:
+                    warnings.append(f"page {number}: no text found")
+        blocks += _page_blocks(found, body_size, number)
+    meta = {k: v for k, v in (doc.metadata or {}).items() if v}
+    meta["parser"] = "pymupdf"
+    return ParsedDocument(blocks=blocks, metadata=meta, page_count=doc.page_count,
+                          ocr_used=ocr_pages > 0 and any("OCR" in w and "recognised" in w
+                                                         for w in warnings),
+                          warnings=warnings)
+
+
+def _is_heading(line: tuple, body_size: float, others: list[tuple]) -> bool:
+    """A line is a heading when it has words, is short, and is either set larger than the
+    body (1.12x: a 10.5 pt heading over 9 pt text) or bold at body size while standing alone
+    on its line (not a cell of a table row) and not reading as a sentence."""
+    text, size, bold, bbox = line
+    text = text.strip()
+    if not text or len(text) > 120 or not re.search(r"[A-Za-z]{2}", text) or not body_size:
+        return False
+    if size >= body_size * 1.12:
+        return True
+    if not bold or len(text) > 100 or text.endswith((".", ",", ";")) or \
+            size < body_size * 0.95:
+        return False
+    return not any(o is not bbox and o[1] < bbox[3] - 1 and o[3] > bbox[1] + 1 and
+                   (o[2] < bbox[0] or o[0] > bbox[2]) for o in others)
+
+
+def _page_blocks(found: list[list[tuple]], body_size: float, number: int) -> list[Block]:
+    """A page's text blocks, with heading lines split out of them (a heading and its body
+    often share one PyMuPDF block)."""
+    others = [ln[3] for lines in found for ln in lines]
+    out: list[Block] = []
+    for lines in found:
+        body: list[str] = []
+        for i, line in enumerate(lines):
+            # Only a block's leading lines can be headings: a bold word inside a paragraph
+            # is emphasis.
+            if not body and _is_heading(line, body_size, others):
+                out.append(Block("heading", _clean(line[0]), number,
+                                 level=_heading_level(line[1], body_size)))
+            else:
+                body.append(line[0])
+        if body:
+            out.append(Block("text", _clean("\n".join(body)), number))
+    return out
+
+
+def parse_pdf_routed(content: bytes, filename: str, limits: ParserLimits,
+                     vlm=None) -> ParsedDocument:
+    """A PDF through the configured parser and its fallback chain, then the vision-model pass
+    over scanned pages:
+
+        docling (if chosen) --missing / error / timeout / over docling_max_pages--> pymupdf
+        image-only pages with thin OCR text (or a KYC / board-resolution scan) --> vision model
+
+    Every fallback leaves a warning on the document saying why."""
+    with _open_pdf(content, limits) as doc:
+        warnings: list[str] = []
+        parsed = None
+        if limits.pdf_parser == "docling":
+            from aura.ingest import docling_parser as dl
+            reason = None
+            if not dl.docling_available(limits.docling_artifacts):
+                reason = dl.unavailable_reason(limits.docling_artifacts)
+            elif doc.page_count > limits.docling_max_pages:
+                reason = (f"{doc.page_count} pages is over the Docling cap of "
+                          f"{limits.docling_max_pages}")
+            else:
+                try:
+                    parsed = dl.parse_with_docling(content, filename, limits.docling_artifacts,
+                                                   limits.docling_timeout_s, doc.page_count)
+                    if not parsed.blocks and doc.page_count:
+                        raise RuntimeError("Docling found no text")
+                except Exception as exc:
+                    logger.warning("Docling failed on %s; using PyMuPDF", filename,
+                                   exc_info=True)
+                    reason = f"Docling failed ({type(exc).__name__}: {str(exc)[:200]})"
+                    parsed = None
+            if parsed is None:
+                warnings.append(f"{reason}; read with PyMuPDF instead")
+        image_pages = image_only_pages(doc, limits.ocr_min_chars)
+        if parsed is None:
+            parsed = _parse_pdf_pymupdf(doc, limits)
+        else:
+            parsed.metadata.update({k: v for k, v in (doc.metadata or {}).items() if v})
+            parsed.metadata["parser"] = "docling"
+            ocr_pages = [p for p in image_pages
+                         if any(b.page == p and (b.text or b.rows) for b in parsed.blocks)]
+            parsed.ocr_used = bool(ocr_pages)
+            if ocr_pages:
+                warnings.append("page(s) " + ", ".join(map(str, ocr_pages)) +
+                                ": text recognised by OCR (Docling)")
+        parsed.warnings = warnings + parsed.warnings
+        if limits.scan_vlm != "off" and image_pages:
+            from aura.ingest import vlm as vlm_mod
+            reader = vlm if vlm is not None else vlm_mod.vlm_from_settings()
+
+            def page_png(number: int) -> bytes:
+                return doc[number - 1].get_pixmap(dpi=vlm_mod.RENDER_DPI).tobytes("png")
+
+            vlm_mod.apply_vlm(parsed, page_png, image_pages, limits.scan_vlm, filename,
+                              limits.vlm_max_pages, reader)
+        return parsed
 
 
 def parse_docx(content: bytes, limits: ParserLimits) -> ParsedDocument:
@@ -508,8 +782,8 @@ def html_to_text(markup: str) -> str:
 
 
 def _email_blocks(headers: list[tuple[str, str]], subject: str, body: str,
-                  attachments: list[tuple[str, bytes]], limits: ParserLimits, depth: int
-                  ) -> ParsedDocument:
+                  attachments: list[tuple[str, bytes]], limits: ParserLimits, depth: int,
+                  vlm=None) -> ParsedDocument:
     blocks = [Block("heading", subject or "(no subject)")]
     head = "\n".join(f"{k}: {v}" for k, v in headers if v)
     if head:
@@ -517,6 +791,7 @@ def _email_blocks(headers: list[tuple[str, str]], subject: str, body: str,
     blocks += _paragraph_blocks(body)
     warnings: list[str] = []
     ocr_used = False
+    model_runs: list = []
     if attachments:
         listing = ", ".join(f"{name} ({max(1, len(data) // 1024)} KB)"
                             for name, data in attachments)
@@ -526,7 +801,7 @@ def _email_blocks(headers: list[tuple[str, str]], subject: str, body: str,
             warnings.append(f"attachment {name}: nested too deep, not read")
             continue
         try:
-            inner = parse(data, name, limits=limits, _depth=depth + 1)
+            inner = parse(data, name, limits=limits, _depth=depth + 1, vlm=vlm)
         except UnsupportedFormat:
             warnings.append(f"attachment {name}: format not supported, listed only")
             continue
@@ -534,14 +809,18 @@ def _email_blocks(headers: list[tuple[str, str]], subject: str, body: str,
             warnings.append(f"attachment {name}: {exc}")
             continue
         blocks.append(Block("heading", f"Attachment: {name}"))
-        blocks += [Block(b.kind, b.text, None, b.rows, b.level) for b in inner.blocks]
+        blocks += [Block(b.kind, b.text, None, b.rows, b.level, dict(b.meta))
+                   for b in inner.blocks]
         warnings += [f"attachment {name}: {w}" for w in inner.warnings]
         ocr_used = ocr_used or inner.ocr_used
+        model_runs += inner.model_runs
     return ParsedDocument(blocks=blocks, warnings=warnings, ocr_used=ocr_used,
-                          metadata={"subject": subject, "attachments": len(attachments)})
+                          metadata={"subject": subject, "attachments": len(attachments)},
+                          model_runs=model_runs)
 
 
-def parse_eml(content: bytes, limits: ParserLimits, depth: int = 0) -> ParsedDocument:
+def parse_eml(content: bytes, limits: ParserLimits, depth: int = 0, vlm=None
+              ) -> ParsedDocument:
     try:
         msg = email.message_from_bytes(content, policy=policy.default)
     except Exception as exc:
@@ -566,10 +845,11 @@ def parse_eml(content: bytes, limits: ParserLimits, depth: int = 0) -> ParsedDoc
             data = b""
         attachments.append((name, data))
     return _email_blocks(headers, str(msg.get("Subject", "") or ""), body, attachments,
-                         limits, depth)
+                         limits, depth, vlm)
 
 
-def parse_msg(content: bytes, limits: ParserLimits, depth: int = 0) -> ParsedDocument:
+def parse_msg(content: bytes, limits: ParserLimits, depth: int = 0, vlm=None
+              ) -> ParsedDocument:
     import extract_msg
     try:
         msg = extract_msg.Message(content)
@@ -590,7 +870,8 @@ def parse_msg(content: bytes, limits: ParserLimits, depth: int = 0) -> ParsedDoc
                 name = getattr(att, "longFilename", None) or getattr(att, "shortFilename",
                                                                      None) or "attachment"
                 attachments.append((name, data))
-        return _email_blocks(headers, msg.subject or "", body, attachments, limits, depth)
+        return _email_blocks(headers, msg.subject or "", body, attachments, limits, depth,
+                             vlm)
     finally:
         try:
             msg.close()
@@ -604,7 +885,7 @@ def parse_text(content: bytes, limits: ParserLimits, markdown: bool = False
 
 
 def parse(content: bytes, filename: str, mime: str | None = None,
-          limits: ParserLimits | None = None, _depth: int = 0) -> ParsedDocument:
+          limits: ParserLimits | None = None, _depth: int = 0, vlm=None) -> ParsedDocument:
     limits = limits or limits_from_settings()
     if len(content) > limits.max_bytes:
         raise DocumentTooLarge(f"{len(content) / 1048576:.1f} MB is over the "
@@ -614,7 +895,7 @@ def parse(content: bytes, filename: str, mime: str | None = None,
     kind, warnings = detect(content, filename, mime)
     try:
         if kind == "pdf":
-            parsed = parse_pdf(content, limits)
+            parsed = parse_pdf_routed(content, filename, limits, vlm)
         elif kind == "docx":
             parsed = parse_docx(content, limits)
         elif kind == "xlsx":
@@ -624,9 +905,9 @@ def parse(content: bytes, filename: str, mime: str | None = None,
         elif kind == "pptx":
             parsed = parse_pptx(content, limits)
         elif kind == "eml":
-            parsed = parse_eml(content, limits, _depth)
+            parsed = parse_eml(content, limits, _depth, vlm)
         elif kind == "msg":
-            parsed = parse_msg(content, limits, _depth)
+            parsed = parse_msg(content, limits, _depth, vlm)
         else:
             parsed = parse_text(content, limits, markdown=kind == "md")
     except IngestError:
@@ -641,10 +922,13 @@ def parse(content: bytes, filename: str, mime: str | None = None,
 
 
 class FormatRegistryParser:
-    """The DocumentParser port: format by extension and magic bytes, limits from settings."""
+    """The DocumentParser port: format by extension and magic bytes, limits and PDF routing
+    from settings (or the limits given). `vlm` replaces the vision model built from settings
+    (tests pass a fake)."""
 
-    def __init__(self, limits: ParserLimits | None = None):
-        self.limits = limits
+    def __init__(self, limits: ParserLimits | None = None, vlm=None):
+        self.limits, self.vlm = limits, vlm
 
     def parse(self, content: bytes, filename: str, mime: str | None = None) -> ParsedDocument:
-        return parse(content, filename, mime, self.limits or limits_from_settings())
+        return parse(content, filename, mime, self.limits or limits_from_settings(),
+                     vlm=self.vlm)

@@ -148,4 +148,4 @@ def test_the_app_role_has_dml_only(scratch):
                 "DROP TABLE users", "TRUNCATE users"):
         with pytest.raises((ProgrammingError, DBAPIError)):
             _scalar(app, sql)
-    assert _scalar(app, "SELECT version_num FROM alembic_version") == "0002_document_index"
+    assert _scalar(app, "SELECT version_num FROM alembic_version") == "0003_embed_run_vlm_page"

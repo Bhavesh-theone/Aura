@@ -35,12 +35,16 @@ class EmbeddingError(Exception):
 @dataclass
 class Block:
     """One structural piece of a parsed document. `rows` holds a table's cells (the first
-    row is the header); `text` is always the readable form used for search."""
+    row is the header, or the first meta['header_rows'] rows); `text` is always the readable
+    form used for search. `meta` carries what the parser knows about the block: 'header_rows',
+    'columns' (flattened column names of a multi-row header), 'source' ('ocr', 'vlm'),
+    'needs_review' (a vision-model number OCR did not confirm), ..."""
     kind: str
     text: str
     page: int | None = None
     rows: list[list[str]] | None = None
     level: int | None = None  # heading level, when known
+    meta: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -50,6 +54,9 @@ class ParsedDocument:
     page_count: int | None = None
     ocr_used: bool = False
     warnings: list[str] = field(default_factory=list)
+    # Lineage of model calls made while parsing (vision-model page reads), recorded with the
+    # document's embedding batches.
+    model_runs: list["EmbedRun"] = field(default_factory=list)
 
     @property
     def text(self) -> str:

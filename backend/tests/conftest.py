@@ -20,6 +20,10 @@ _owner = _base.migration_database_url or \
 # Tests never call a model: deterministic hash embeddings (aura.ingest.embedder.FakeEmbedder).
 # The live Ollama test opts back in explicitly.
 os.environ["AURA_EMBEDDER"] = "fake"
+# PDFs through PyMuPDF and no vision model unless a test asks: Docling takes seconds a page
+# and the vision model needs Ollama (tests/integration/test_docling_parser.py opts in).
+os.environ["AURA_PDF_PARSER"] = "pymupdf"
+os.environ["AURA_SCAN_VLM"] = "off"
 
 os.environ["AURA_DATABASE_URL"] = make_url(_base.database_url).set(
     database=TEST_DB).render_as_string(hide_password=False)

@@ -40,10 +40,13 @@ ollama pull qwen3.5:4b
 
 ```bash
 cd backend
-uv sync
+uv sync --extra docling   # or plain `uv sync` for the light install without Docling
 ```
 
-That creates `.venv/` and installs everything from `uv.lock`. The `.env` file is already present with local-only defaults — no editing needed to get started. If you start from `.env.example`, copy it to `backend/.env`: it lists the database passwords and URLs with their development defaults.
+That creates `.venv/` and installs everything from `uv.lock`. `--extra docling` adds Docling
+(the better PDF parser: layout, table cell grids, OCR; about 1.3 GB with CPU-only torch) — see
+[PDF parsing: Docling](#pdf-parsing-docling) for its model folder. Without it PDFs are read by
+PyMuPDF. Note that a later plain `uv sync` removes the extra again; `uv run` leaves it alone. The `.env` file is already present with local-only defaults — no editing needed to get started. If you start from `.env.example`, copy it to `backend/.env`: it lists the database passwords and URLs with their development defaults.
 
 ### Database (PostgreSQL 16 + pgvector)
 
@@ -316,7 +319,7 @@ Ollama.
 
 | Format | Library | What is kept |
 | --- | --- | --- |
-| PDF | PyMuPDF | text per page; larger-font single lines become headings. A page with (almost) no text layer is **OCR'd** with RapidOCR (`rapidocr_onnxruntime`, models ship in the wheel, works offline) and marked in the warnings |
+| PDF | Docling, else PyMuPDF | **Docling** (when installed; [below](#pdf-parsing-docling)): headings with levels, text, and tables as full cell grids (merged headers, header rows) per page, OCR of scanned pages. **PyMuPDF** (fallback): text per page; lines set larger (1.12x body) or bold and standing alone become headings. A page with (almost) no text layer is **OCR'd** with RapidOCR (`rapidocr_onnxruntime`, models ship in the wheel, works offline): the render is deskewed first and the boxes are grouped into lines. Either way a local vision model can re-read scanned pages |
 | DOCX | python-docx | paragraphs, `Heading`/`Title` styles as headings, tables (rows and cells) in document order |
 | XLSX / XLSM | openpyxl | each sheet's used range as a table, header row kept (`Sheet: <name>` heading); empty sheets are reported |
 | CSV | csv | one table |
@@ -335,6 +338,91 @@ returns the accepted extensions and the limit (the upload dialog shows them).
 `AURA_OCR_ENABLED` (true), `AURA_OCR_MAX_PAGES` (50 OCR'd pages per document; later image pages
 are reported, not read), `AURA_OCR_MIN_CHARS` (25: a page with fewer extractable characters is
 treated as an image). OCR takes about 1-3 s a page on this machine.
+
+#### PDF parsing: Docling
+
+PDFs go through [Docling](https://github.com/docling-project/docling) when it is installed
+and its models are present, because it is the only parser that reads financial statements as
+tables: on the Project Kaveri test pack (`backend/tests/fixtures/parsing`, see
+`docs/research/parser-bakeoff.md`) it gets every cell of the audited P&L and Balance Sheet right
+where PyMuPDF produces no grid at all, finds the headings PyMuPDF misses, and reads scans with
+far fewer character errors. PPTX, DOCX, XLSX, EML, MSG, CSV and TXT/MD keep their own parsers
+(Docling drops speaker notes and sheet names).
+
+**Setup (once, offline afterwards).**
+
+1. `uv sync --extra docling` (Python 3.13 is fine; `rapidocr` is pinned below 3.10, which
+   breaks Docling 2.135; on a `MAX_PATH` error set a short cache, e.g.
+   `$env:UV_CACHE_DIR = "C:\uvc"`).
+2. Put the models in `backend/data/docling-models` (gitignored, ~570 MB): the folders
+   `docling-project--docling-layout-heron`, `docling-project--docling-models` (TableFormer) and
+   `RapidOcr`. Download them once with `uv run docling-tools models download layout tableformer
+   rapidocr -o data/docling-models` (retry if Hugging Face drops the connection), or copy them
+   from a machine that has them.
+3. Check: `uv run python -c "from aura.ingest.docling_parser import docling_available;
+   print(docling_available('data/docling-models'))"` prints `True`. Aura forces
+   `HF_HUB_OFFLINE=1` when it builds the converter, so nothing is downloaded at run time.
+
+**Settings** (`backend/.env`):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `AURA_PDF_PARSER` | `auto` | `auto`: Docling if the extra and its models are installed, else PyMuPDF. `docling` / `pymupdf` force one |
+| `AURA_DOCLING_ARTIFACTS` | `backend/data/docling-models` | the model folder |
+| `AURA_DOCLING_MAX_PAGES` | 120 | longer PDFs go straight to PyMuPDF |
+| `AURA_DOCLING_TIMEOUT_S` | 600 | per document; a run that does not finish every page falls back |
+| `AURA_SCAN_VLM` | `fallback` | vision-model pass over scanned pages: `off`, `fallback`, `always` |
+| `AURA_VLM_MODEL` | `qwen3.5:4b` | an Ollama model that accepts images |
+| `AURA_VLM_MAX_PAGES` | 5 | scanned pages read by the vision model per document |
+| `AURA_VLM_TIMEOUT_S` | 300 | per page (also the wait for a free model slot) |
+
+**Fallback chain.** Docling not installed, models missing, more than
+`AURA_DOCLING_MAX_PAGES` pages, an error, or not finished within `AURA_DOCLING_TIMEOUT_S` ->
+the PyMuPDF + RapidOCR path, and the document's warnings say why (`Docling failed (...); read
+with PyMuPDF instead`). `metadata.parser` on the parsed document records which one ran.
+
+**Vision model on scans.** A page with no text layer is "image-only". With
+`AURA_SCAN_VLM=fallback` the vision model reads it (150 dpi, Markdown, temperature 0, thinking
+off) when the OCR text on it is thin (under 200 characters), or when the file name says it is a
+KYC paper or a board resolution (`kyc`, `resolution`, `pan`, `aadhaar`, `passport`, `signed`,
+...), whose handwritten and dense fields OCR loses; `always` reads every image-only page. Its
+transcription replaces the OCR text of the page, but a number in it counts only if OCR saw the
+same number: otherwise the page's chunks get `needs_review: true` in `doc_chunk.meta` and the
+document a warning naming the numbers. Each call takes a slot of the model-call semaphore
+(`AURA_MAX_CONCURRENT_LLM_CALLS`), so it queues behind agent calls rather than competing for
+the GPU, and is recorded as an `embed_run` row with `kind = 'vlm_page'` (model, latency,
+status, characters returned) — not as an `agent_run`, so it does not count against
+`AURA_MAX_LLM_CALLS_PER_DAY`. If Ollama is down the OCR text stays, with a warning.
+
+**Performance** (this laptop, CPU, i7 + RTX 3060 for the vision model only):
+
+| Path | Digital PDF page | Scanned page | First document (model load) |
+| --- | --- | --- | --- |
+| PyMuPDF (+ RapidOCR on scans) | ~5 ms | ~4-7 s (incl. deskew) | ~9 s |
+| Docling (CPU) | ~4-5 s (5.5 on table-heavy pages) | ~5-7 s | ~30-40 s |
+| Vision model `qwen3.5:4b` (GPU) | — | ~50 s (~80 s cold) | model load in Ollama |
+
+Measured on the Kaveri pack: parsing all 7 documents takes 12 s with PyMuPDF and 39 s with
+Docling (cold); the retrieval eval's indexing of both packs 17 s vs 56 s. Results
+(`--capability parsing`): table cells 39% -> **100%** (financial statements 0% -> 100%),
+row/column fields 42% -> **100%**, key fields 92% -> 95%, headings 89% -> 94%, scanned-page
+character error rate 0.148 -> **0.042**; retrieval recall@5 on the 22 Kaveri queries 0.91 ->
+**1.00** (Nilgiri unchanged at 1.00).
+
+Peak memory of the worker grows by about 1.6 GB while Docling runs. A 100-page PDF takes
+about 7-8 minutes in the background indexer; that is why the page cap and timeout exist, and
+why `AURA_INDEX_LEASE_SECONDS` defaults to 1800.
+
+**Parsing eval.** `uv run python -m aura.evals.run --capability parsing [--pdf-parser
+pymupdf|docling|both]` parses the Kaveri pack against its ground truth and prints table-cell
+accuracy, row/column field checks, key-field recall, heading recall and the character error
+rate per document and parser; it passes when the configured parser's mean of table cells,
+row/column fields and key fields is at least `AURA_EVAL_THRESHOLD_PARSING` (0.9). The
+retrieval eval (`--capability retrieval`) indexes the Kaveri pack next to Nilgiri and includes
+its 22 queries.
+
+After switching parsers, reindex what is already stored:
+`uv run python -m aura.ingest.backfill --reindex`.
 
 **Indexing.** Upload (and every new version, and **Reindex**) queues the document in
 `index_job` (one row per document) and marks it `pending`. A worker thread in the API process
@@ -375,7 +463,7 @@ document's chunks in one transaction -> `indexed` (+ `indexed_at`, `chunk_count`
 cd backend
 uv run python -m aura.ingest.backfill                 # every document not yet indexed
 uv run python -m aura.ingest.backfill --deal 3 --limit 20
-uv run python -m aura.ingest.backfill --all           # re-index everything
+uv run python -m aura.ingest.backfill --reindex       # re-index everything (alias --all)
 uv run python -m aura.ingest.backfill --queue-only    # just queue; the running API does it
 ```
 

@@ -1,11 +1,16 @@
-"""Retrieval evaluation: hybrid search over the fixture deal pack, scored on a golden set.
+"""Retrieval evaluation: hybrid search over the fixture deal packs, scored on a golden set.
 
     uv run python -m aura.evals.run --capability retrieval [--embedder ollama|fake]
+        [--scan-vlm off|fallback|always]
 
-The fixture pack (tests/fixtures/ingest: PDF with a scanned page, DOCX, XLSX, PPTX, EML,
-Markdown, CSV; the fictional "Project Nilgiri") is parsed, chunked and embedded by the real
-pipeline into a throwaway deal, inside one transaction that is rolled back at the end: the
-database keeps only the eval_run row. Each golden query (evals/golden/retrieval.jsonl) is
+The fixture packs (tests/fixtures/ingest, the fictional "Project Nilgiri": PDF with a scanned
+page, DOCX, XLSX, PPTX, EML, Markdown, CSV; and tests/fixtures/parsing, "Project Kaveri":
+digital and scanned PDFs with financial tables, DOCX, XLSX, PPTX) are parsed, chunked and
+embedded by the real pipeline into one throwaway deal, inside one transaction that is rolled
+back at the end: the database keeps only the eval_run row. Golden cases whose expected files
+are in none of the indexed packs are skipped (evaluate_retrieval indexes only the Nilgiri pack
+unless told otherwise; the CLI indexes both). Metrics are also split by subset: ret-* cases
+(Nilgiri) and kav-* cases (Kaveri). Each golden query (evals/golden/retrieval.jsonl) is
 searched with the real hybrid search; a result is relevant when it comes from an expected file
 and (if given) contains the expected phrase. Metrics: recall@5 (a relevant chunk in the top
 5) and MRR (mean reciprocal rank of the first relevant chunk, over the top k).
@@ -29,6 +34,14 @@ FIXTURE_DIR = BACKEND_DIR / "tests" / "fixtures" / "ingest"
 PACK = ("nilgiri_information_memorandum.pdf", "nilgiri_spa_draft.docx",
         "nilgiri_financial_model.xlsx", "nilgiri_management_presentation.pptx",
         "nilgiri_fdd_red_flags.eml", "nilgiri_board_minutes.md", "nilgiri_dd_tracker.csv")
+KAVERI_DIR = BACKEND_DIR / "tests" / "fixtures" / "parsing"
+KAVERI_PACK = ("kaveri_audited_financials_fy24.pdf", "kaveri_ncd_term_sheet.pdf",
+               "kaveri_borrowings_schedule_scanned.pdf", "kaveri_board_resolution_scanned.pdf",
+               "kaveri_information_memorandum.docx", "kaveri_financial_model.xlsx",
+               "kaveri_teaser.pptx")
+PACKS = {"nilgiri": (FIXTURE_DIR, PACK), "kaveri": (KAVERI_DIR, KAVERI_PACK)}
+ALL_PACKS = ("nilgiri", "kaveri")
+SUBSETS = {"ret": "nilgiri", "kav": "kaveri"}  # case-id prefix -> subset name
 EVAL_EXTERNAL_ID = "EVAL-RETRIEVAL"
 K = 10
 
@@ -53,9 +66,19 @@ def score_case(results, case: dict, k_recall: int = 5) -> dict:
             "reciprocal_rank": 1.0 / first if first else 0.0}
 
 
+def pack_files(packs=("nilgiri",), fixture_dir: Path = FIXTURE_DIR) -> list[tuple[Path, str]]:
+    """(directory, filename) of every file in these packs; `fixture_dir` replaces Nilgiri's."""
+    out = []
+    for pack in packs:
+        directory, names = PACKS[pack]
+        directory = fixture_dir if pack == "nilgiri" else directory
+        out += [(directory, name) for name in names]
+    return out
+
+
 def build_pack(session: Session, embedder, owner: str, fixture_dir: Path = FIXTURE_DIR,
-               parser=None) -> tuple[int, dict]:
-    """Index the fixture pack into a new deal on this session (the caller rolls back).
+               parser=None, packs=("nilgiri",)) -> tuple[int, dict]:
+    """Index the fixture packs into a new deal on this session (the caller rolls back).
     Returns (deal_id, per-file summary)."""
     from aura.data.models.tables import DealRow, DocumentRow
     from aura.data.repositories.sql_deals import SqlDocumentRepository
@@ -68,7 +91,7 @@ def build_pack(session: Session, embedder, owner: str, fixture_dir: Path = FIXTU
     # it, so the server must not end it as idle (aura_test sets a 3 s limit).
     session.execute(text("SET LOCAL idle_in_transaction_session_timeout = 0"))
     now = utcnow()
-    deal = DealRow(external_id=EVAL_EXTERNAL_ID, name="Retrieval evaluation (Project Nilgiri)",
+    deal = DealRow(external_id=EVAL_EXTERNAL_ID, name="Retrieval evaluation (fixture packs)",
                    stage="DILIGENCE", transaction_class="MNA", owner=owner,
                    opened_at=now)
     session.add(deal)
@@ -81,8 +104,8 @@ def build_pack(session: Session, embedder, owner: str, fixture_dir: Path = FIXTU
     settings = IndexSettings(ChunkingParams(s.chunk_target_tokens, s.chunk_overlap_tokens),
                              s.embed_batch)
     summary = {}
-    for name in PACK:
-        content = (fixture_dir / name).read_bytes()
+    for directory, name in pack_files(packs, fixture_dir):
+        content = (directory / name).read_bytes()
         sha = hashlib.sha256(content).hexdigest()
         contents[sha] = content
         row = DocumentRow(deal_id=deal.id, doc_class="nda", filename=name, sha256=sha,
@@ -100,22 +123,43 @@ def build_pack(session: Session, embedder, owner: str, fixture_dir: Path = FIXTU
     return deal.id, summary
 
 
+def subset_of(case_id: str) -> str:
+    return SUBSETS.get(case_id.split("-", 1)[0], "other")
+
+
+def subset_metrics(results: list[EvalCaseResult]) -> dict:
+    groups: dict[str, list[EvalCaseResult]] = {}
+    for r in results:
+        groups.setdefault(subset_of(r.case_id), []).append(r)
+    return {name: {"n": len(rs),
+                   "recall_at_5": round(sum(1 for r in rs if r.passed) / len(rs), 4),
+                   "mrr": round(sum(r.score for r in rs) / len(rs), 4)}
+            for name, rs in groups.items()}
+
+
 def evaluate_retrieval(session: Session, embedder, cases: list[dict], digest: str,
-                       threshold: float, created_by: str = "cli", store: bool = True
-                       ) -> EvalRun:
+                       threshold: float, created_by: str = "cli", store: bool = True,
+                       parser=None, packs=("nilgiri",)) -> EvalRun:
+    """Index `packs`, search every golden case whose expected files are among them, score and
+    (by default) store the run. `parser` replaces the configured FormatRegistryParser."""
     from aura.data.repositories.sql_ingest import SqlChunkRepository
     from aura.data.walls import SYSTEM
     s = get_settings()
     params = SearchParams(k=K, candidates=s.search_candidates, rrf_k=s.rrf_k,
                           ef_search=s.hnsw_ef_search)
     owner = "admin"
+    indexed = {name for _, name in pack_files(packs)}
+    skipped = [c["id"] for c in cases
+               if not any(e["filename"] in indexed for e in c["expected"])]
+    cases = [c for c in cases if c["id"] not in skipped]
     started = utcnow()
     clock = time.perf_counter()
     results: list[EvalCaseResult] = []
     with tracer.span("eval.run", {"aura.capability": "retrieval",
                                   "gen_ai.request.model": embedder.model}) as span:
         try:
-            deal_id, pack = build_pack(session, embedder, owner)
+            deal_id, pack = build_pack(session, embedder, owner, parser=parser,
+                                       packs=packs)
             index_seconds = round(time.perf_counter() - clock, 2)
             repo = SqlChunkRepository(session, SYSTEM)
             for case in cases:
@@ -143,7 +187,9 @@ def evaluate_retrieval(session: Session, embedder, cases: list[dict], digest: st
                "chunks": sum(v["chunks"] for v in pack.values()),
                "ocr_used": [k for k, v in pack.items() if v["ocr_used"]],
                "embedding_model": embedder.model, "trace_id": span.trace_id,
-               "errors": 0}
+               "errors": 0, "packs": list(packs), "subsets": subset_metrics(results)}
+    if skipped:
+        metrics["skipped_cases"] = skipped
     run = EvalRun(id=None, capability="retrieval", orchestrator="search",
                   model_id=embedder.model, golden_sha256=digest, n_cases=len(results),
                   score=recall, threshold=threshold, passed=recall >= threshold,

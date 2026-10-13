@@ -186,7 +186,7 @@ The same screens in the dark theme: the Decisions inbox with an open handoff, an
 |---|---|
 | Backend | Python 3.13, FastAPI, SQLAlchemy 2, Alembic, uv |
 | Database | PostgreSQL 16 + pgvector in a local Podman container (psycopg 3); deal walls also enforced by row-level security; JSONB deal profiles validated by JSON Schema |
-| Documents | PDF (with local OCR), DOCX, XLSX, CSV, PPTX, EML, MSG, TXT/MD parsed, chunked and embedded locally (`nomic-embed-text`); hybrid pgvector + full-text search per deal under row-level security ([RUNNING.md](RUNNING.md#documents-formats-indexing-and-search)) |
+| Documents | PDF (Docling layout + table grids when installed, PyMuPDF + local OCR fallback, optional local vision-model read of scans), DOCX, XLSX, CSV, PPTX, EML, MSG, TXT/MD parsed, chunked and embedded locally (`nomic-embed-text`); hybrid pgvector + full-text search per deal under row-level security ([RUNNING.md](RUNNING.md#documents-formats-indexing-and-search)) |
 | Architecture | Hexagonal: `core/` (domain, policy, services) imports nothing from the outer layers; enforced by `lint-imports` |
 | Agents | CrewAI, local Ollama `qwen3.5:4b`, first-party MCP deals server; a deterministic stub runs when Ollama is down |
 | Frontend | Next.js, TypeScript, Radix primitives, lucide icons, self-hosted Inter / Newsreader / JetBrains Mono |

@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     eval_threshold_draft_email: float = 0.8
     # Retrieval (recall@5 of hybrid search on evals/golden/retrieval.jsonl).
     eval_threshold_retrieval: float = 0.8
+    # Parsing: mean of table-cell accuracy, row/col field accuracy and key-field recall on
+    # the Project Kaveri fixtures (tests/fixtures/parsing), for the PDF parser in use.
+    eval_threshold_parsing: float = 0.9
     # Demote a capability when people override it more than this share of decisions...
     autonomy_max_override_rate: float = 0.20
     # ...over at least this many decisions in the last autonomy_window_days days.
@@ -84,6 +87,23 @@ class Settings(BaseSettings):
     ocr_max_pages: int = 50
     # A PDF page with fewer extractable characters than this is treated as an image (OCR).
     ocr_min_chars: int = 25
+    # PDF parser (RUNNING.md, "PDF parsing: Docling"). 'auto' uses Docling when its optional
+    # dependency (uv sync --extra docling) and models are installed, else PyMuPDF. Docling
+    # missing, failing, timing out or over its page cap falls back to PyMuPDF (+ RapidOCR),
+    # with a warning on the document.
+    pdf_parser: Literal["auto", "docling", "pymupdf"] = "auto"
+    # Docling's model folder (layout, TableFormer, RapidOcr); nothing is downloaded at run time.
+    docling_artifacts: str = str(BACKEND_DIR / "data" / "docling-models")
+    docling_max_pages: int = 120
+    docling_timeout_s: float = 600.0
+    # Second reading of image-only (scanned) PDF pages by a local vision model through Ollama:
+    # 'off', 'fallback' (pages whose OCR text is thin, and scans named like KYC papers or board
+    # resolutions) or 'always' (every image-only page), at most vlm_max_pages per document.
+    # Its numbers count only when OCR saw them too; otherwise the page is marked needs_review.
+    scan_vlm: Literal["off", "fallback", "always"] = "fallback"
+    vlm_model: str = "qwen3.5:4b"
+    vlm_max_pages: int = 5
+    vlm_timeout_s: float = 300.0
     chunk_target_tokens: int = 800
     chunk_overlap_tokens: int = 100
     # 'ollama' (nomic-embed-text through Ollama) or 'fake' (deterministic hash vectors, for
@@ -100,7 +120,9 @@ class Settings(BaseSettings):
     # Indexing queue: claims before a transient failure dead-letters the job, backoff base.
     index_max_attempts: int = 3
     index_backoff_seconds: float = 15.0
-    index_lease_seconds: int = 900
+    # Longer than the slowest legitimate run: Docling up to docling_timeout_s plus the vision
+    # model on up to vlm_max_pages scanned pages (~1 min each).
+    index_lease_seconds: int = 1800
 
     # Rate limits: job submissions per user per minute (0 = off), model calls at once.
     job_submits_per_minute: int = 20

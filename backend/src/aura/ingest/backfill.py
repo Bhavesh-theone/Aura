@@ -1,8 +1,10 @@
 """Index existing documents (uploaded before phase 2, or whose indexing failed).
 
-    uv run python -m aura.ingest.backfill [--deal ID] [--limit N] [--all] [--queue-only]
+    uv run python -m aura.ingest.backfill [--deal ID] [--limit N] [--all | --reindex]
+                                          [--queue-only]
 
-Queues every document that is not indexed yet (--all: every document), then works the queue
+Queues every document that is not indexed yet (--all or --reindex: every document, e.g. after
+changing the PDF parser), then works the queue
 in this process and prints one line per document. The API's own index worker may take some
 of the jobs at the same time; claims are FOR UPDATE SKIP LOCKED, so nothing is done twice.
 --queue-only leaves the work to the running API. Exit code 1 when any document failed.
@@ -33,7 +35,8 @@ def main(argv: list[str] | None = None) -> int:
                                  description="Index existing documents.")
     ap.add_argument("--deal", type=int, default=None, help="only this deal id")
     ap.add_argument("--limit", type=int, default=None, help="at most N documents")
-    ap.add_argument("--all", action="store_true", help="re-index indexed documents too")
+    ap.add_argument("--all", "--reindex", dest="all", action="store_true",
+                    help="re-index indexed documents too (e.g. after a parser change)")
     ap.add_argument("--queue-only", action="store_true",
                     help="queue them and let the API's worker do the work")
     args = ap.parse_args(argv)
@@ -60,7 +63,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         parser, embedder = parser_factory(), embedder_factory()
-        print(f"embedder: {embedder.model}")
+        from aura.ingest.parsers import limits_from_settings
+        limits = limits_from_settings()
+        print(f"embedder: {embedder.model}; PDF parser: {limits.pdf_parser}; "
+              f"scan VLM: {limits.scan_vlm}")
         started = time.perf_counter()
         counts: dict[str, int] = {}
         while True:

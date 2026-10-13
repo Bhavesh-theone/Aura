@@ -167,6 +167,9 @@ def _index(job, doc, read_bytes, parser, embedder, chunks, state, audit, runs, s
                      deal_id=doc.deal_id) as span:
         content = read_bytes(doc.sha256)
         parsed = parser.parse(content, doc.filename)
+        for run in parsed.model_runs:  # vision-model page reads made while parsing
+            run.deal_id, run.document_id = doc.deal_id, doc.id
+            collected.record(run)
         drafts = chunk_document(parsed, settings.chunking)
         stored: list[StoredChunk] = []
         flagged = 0
