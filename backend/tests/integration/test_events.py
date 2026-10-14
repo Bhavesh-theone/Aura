@@ -109,6 +109,21 @@ def test_the_notifying_audit_announces_each_change_with_its_deal():
     assert len(inner.entries) == 2 and audit.count_by_action("user_created") == 1
 
 
+def test_a_member_taken_off_the_wall_is_told_so_their_open_page_drops_the_deal():
+    inner, events = FakeAuditRepo(), FakeEvents()
+    NotifyingAudit(inner, events).append(AuditEntry(
+        id=None, job_id=None, deal_id=7, actor="priya", action="wall_member_removed",
+        payload={"username": "asha"}, created_at=datetime.now(timezone.utc)))
+    assert events.published == [
+        ("entity_changed", {"kind": "deal", "deal_id": 7}),
+        ("entity_changed", {"kind": "deal", "deal_id": 7, "recipient": "asha"})]
+    # the hub delivers the second event to asha alone, although she is off the wall now
+    hub = EventHub(members_for_deal=lambda deal_id: {"bhavesh", "priya"})
+    sockets = {name: FakeSocket() for name in ("bhavesh", "asha", "rohan")}
+    _fanout(hub, "entity_changed", events.published[1][1], sockets)
+    assert [len(sockets[n].sent) for n in ("bhavesh", "asha", "rohan")] == [0, 1, 0]
+
+
 class Recorder:
     def __init__(self):
         self.got = []

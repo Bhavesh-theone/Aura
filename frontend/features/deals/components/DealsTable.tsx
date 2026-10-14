@@ -116,7 +116,10 @@ function usePref<T extends string>(key: string, initial: T): [T, (v: T) => void]
   return [v, set];
 }
 
-const COLS = "grid-cols-[minmax(260px,1fr)_120px_96px_180px_150px_96px_64px]";
+// Fits 1280px with the sidebar open (narrower fixed columns and gap below 2xl); wider
+// screens get the roomier layout. Header and rows must share both.
+const COLS =
+  "grid-cols-[minmax(180px,1fr)_112px_88px_176px_136px_84px_64px] gap-3 2xl:grid-cols-[minmax(260px,1fr)_120px_96px_180px_150px_96px_64px] 2xl:gap-4";
 
 export function DealsTable() {
   const router = useRouter();
@@ -283,7 +286,7 @@ export function DealsTable() {
             <div
               role="row"
               className={cx(
-                "sticky top-12 z-10 grid h-9 items-center gap-4 rounded-t-md border-b border-line bg-surface/95 px-4 text-[12px] font-medium text-muted backdrop-blur",
+                "sticky top-12 z-10 grid h-9 items-center rounded-t-md border-b border-line bg-surface/95 px-4 text-[12px] font-medium text-muted backdrop-blur",
                 COLS,
               )}
             >
@@ -340,7 +343,7 @@ export function DealsTable() {
                       onClick={() => router.push(`/deals/${d.id}`)}
                       style={{ height: rowH }}
                       className={cx(
-                        "group relative grid cursor-default items-center gap-4 border-b border-line-subtle px-4 last:border-0 last:rounded-b-md",
+                        "group relative grid cursor-default items-center border-b border-line-subtle px-4 last:border-0 last:rounded-b-md",
                         COLS,
                         sel ? "bg-well" : "",
                       )}

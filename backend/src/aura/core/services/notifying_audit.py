@@ -22,6 +22,13 @@ class NotifyingAudit:
                 "recipient": payload.get("recipient") or entry.actor})
         elif kind is not None:
             self._events.publish("entity_changed", {"kind": kind, "deal_id": entry.deal_id})
+            removed = (entry.payload or {}).get("username")
+            if entry.action == "wall_member_removed" and removed:
+                # The person just taken off the wall no longer hears the deal's events, so a
+                # page they have open would keep showing it. Tell them alone: their client
+                # refetches, gets 404 and drops what it was showing.
+                self._events.publish("entity_changed", {"kind": kind, "deal_id": entry.deal_id,
+                                                        "recipient": removed})
         return saved
 
     def list_recent(self, limit: int = 100) -> list[AuditEntry]:

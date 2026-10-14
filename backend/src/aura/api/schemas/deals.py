@@ -39,6 +39,8 @@ class HistoryOut(BaseModel):
     actor: str
     reason_code: str | None
     is_regression: bool
+    # Guards a person overrode (with a written justification) to make this move.
+    overridden: list[str] = []
 
 
 class DealDetailOut(DealOut):

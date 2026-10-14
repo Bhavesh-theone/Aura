@@ -34,6 +34,28 @@ function wsUrl(token: string) {
 }
 
 /**
+ * Close a socket we no longer want, with no reconnect and no handlers firing. A socket
+ * still CONNECTING is closed once it opens: closing it mid-handshake makes the browser
+ * log "WebSocket is closed before the connection is established" (it happened on every
+ * page load in dev, where StrictMode mounts the events effect twice).
+ */
+function closeQuietly(socket: WebSocket) {
+  socket.onclose = null;
+  socket.onerror = null;
+  socket.onmessage = null;
+  if (socket.readyState === WebSocket.CONNECTING) {
+    socket.onopen = () => socket.close();
+    return;
+  }
+  socket.onopen = null;
+  try {
+    socket.close();
+  } catch {
+    /* already closing */
+  }
+}
+
+/**
  * ONE socket for the whole portal. Opened by the portal layout, fanned out to
  * every page through the EventsProvider. Reconnects with backoff; consumers
  * poll whenever `status !== "open"`.
@@ -78,14 +100,7 @@ class EventSocket {
     this.timer = null;
     this.retries = 0;
     if (this.socket) {
-      this.socket.onclose = null;
-      this.socket.onerror = null;
-      this.socket.onmessage = null;
-      try {
-        this.socket.close();
-      } catch {
-        /* already closing */
-      }
+      closeQuietly(this.socket);
       this.socket = null;
     }
   }
@@ -156,12 +171,7 @@ class EventSocket {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.socket) {
-      this.socket.onclose = null;
-      try {
-        this.socket.close();
-      } catch {
-        /* ignore */
-      }
+      closeQuietly(this.socket);
       this.socket = null;
     }
     this.setStatus("idle");

@@ -75,6 +75,11 @@ def test_blocked_transition_then_dealmaker_override(api):
     history_id = api.session.execute(text(
         "SELECT id FROM deal_stage_history WHERE to_stage = 'MANDATED'")).scalar()
     assert [r[2] for r in rows] == [None, None, history_id]
+    # the deal's history marks the overridden move, and only that one
+    history = api.call("GET", f"/api/deals/{deal['id']}").json()["history"]
+    # (set_stage put the deal at QUALIFIED without a history row)
+    assert [(h["to_stage"], h["overridden"]) for h in history] == [
+        ("ORIGINATED", []), ("MANDATED", ["T2_engagement_letter"])]
 
 
 def test_regression_requires_reason_and_is_flagged(api):

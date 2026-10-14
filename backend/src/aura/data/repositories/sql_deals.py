@@ -111,6 +111,21 @@ class SqlStageHistoryRepository:
                               .order_by(DealStageHistoryRow.id)).all()
         return [mappers.history_to_domain(r) for r in rows]
 
+    def overridden_guards(self, deal_id: int) -> dict[int, list[str]]:
+        """history id -> names of the guards overridden to make that move (empty moves left out)."""
+        rows = self.s.execute(
+            walled(select(StageGuardEvaluationRow.history_id, StageGuardRow.guard_name)
+                   .join(StageGuardRow, StageGuardRow.id == StageGuardEvaluationRow.guard_id)
+                   .where(StageGuardEvaluationRow.deal_id == deal_id,
+                          StageGuardEvaluationRow.history_id.is_not(None),
+                          StageGuardEvaluationRow.overridden_by.is_not(None)),
+                   self.viewer, StageGuardEvaluationRow.deal_id)
+            .order_by(StageGuardEvaluationRow.id)).all()
+        out: dict[int, list[str]] = {}
+        for history_id, name in rows:
+            out.setdefault(history_id, []).append(name)
+        return out
+
     def list_all(self) -> list[StageHistoryEntry]:
         rows = self.s.scalars(walled(select(DealStageHistoryRow), self.viewer,
                                      DealStageHistoryRow.deal_id)

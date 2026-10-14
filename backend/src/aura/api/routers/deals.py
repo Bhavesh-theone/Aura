@@ -76,13 +76,15 @@ def create(body: CreateDealRequest, user: User = Depends(current_user),
 def get_deal(deal_id: int, user: User = Depends(current_user), deals=Depends(get_deals),
              parties=Depends(get_parties), history=Depends(get_history)):
     deal = _deal_or_404(deal_id, deals)
+    overridden = history.overridden_guards(deal_id)
     return DealDetailOut(
         **deal_out(deal).model_dump(),
         parties=[DealPartyOut(party_id=p.party_id, display_name=p.display_name,
                               role=p.role.value) for p in parties.list_for_deal(deal_id)],
         history=[HistoryOut(from_stage=h.from_stage.value if h.from_stage else None,
                             to_stage=h.to_stage.value, entered_at=h.entered_at, actor=h.actor,
-                            reason_code=h.reason_code, is_regression=h.is_regression)
+                            reason_code=h.reason_code, is_regression=h.is_regression,
+                            overridden=overridden.get(h.id, []))
                  for h in history.list_for_deal(deal_id)],
         allowed_next=[s.value for s in allowed_next(deal.stage)])
 

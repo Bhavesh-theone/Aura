@@ -100,6 +100,50 @@ def parse_extraction(output: str) -> tuple[dict, float]:
     return figures, float(confidence)
 
 
+# A figure must appear in the text the model read, at one of the scales Indian financial
+# documents use (rupees, lakh, million, crore). A figure that does not (a mis-scaled unit,
+# an invented or derived number) cannot carry a confident score, whatever the model says.
+UNGROUNDED_CONFIDENCE_CAP = 0.5
+_SCALES = (1, 1e5, 1e6, 1e7)
+_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _text_numbers(text: str) -> list[float]:
+    out = []
+    for m in _NUMBER.finditer(text or ""):
+        try:
+            out.append(float(m.group().replace(",", "")))
+        except ValueError:
+            continue
+    return out
+
+
+def ungrounded_figures(figures: dict, text: str) -> list[str]:
+    """Names of the non-null figures that match no number in the text at any scale
+    (within 0.5%, sign ignored: net debt may be negative or shown in brackets)."""
+    numbers = _text_numbers(text)
+    missing = []
+    for key, value in figures.items():
+        if value is None:
+            continue
+        target = abs(float(value))
+        if target == 0:
+            continue
+        # A bare number counts as rupees only from ₹1 lakh up: "412.38" read off a table in
+        # ₹ crore is not ₹412.38 of revenue (the model's other common unit slip).
+        scales = _SCALES if target >= 1e5 else _SCALES[1:]
+        if not any(abs(n * s - target) <= 0.005 * target for n in numbers for s in scales):
+            missing.append(key)
+    return missing
+
+
+def grounded_confidence(figures: dict, confidence: float, text: str) -> float:
+    """The model's confidence, capped below the review gate when any figure is ungrounded."""
+    if ungrounded_figures(figures, text):
+        return min(confidence, UNGROUNDED_CONFIDENCE_CAP)
+    return confidence
+
+
 # Set on a segment's context_out when its next segment only has to finish the job once a
 # person has approved (formerly 'approved_draft', which suggested approval had happened).
 RESUME_MARKER = "resume_after_approval"
@@ -250,6 +294,7 @@ class CrewOrchestrator:
             "filename": doc["filename"],
             "excerpt": doc.get("excerpt") or "(no text available)"}))
         figures, confidence = parse_extraction(output)
+        confidence = grounded_confidence(figures, confidence, doc.get("excerpt") or "")
         proposal = ExtractionProposal(schema_name="financials.v1", payload=figures,
                                       confidence=confidence,
                                       model_run_id=recorder.last_run_id)

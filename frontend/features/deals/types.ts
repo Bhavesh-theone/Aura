@@ -52,6 +52,8 @@ export type StageHistory = {
   actor: string;
   reason_code: string | null;
   is_regression: boolean;
+  /** Guards overridden (with a justification) to make this move. */
+  overridden?: string[];
 };
 export type DealDetail = Deal & { parties: DealParty[]; history: StageHistory[]; allowed_next: string[] };
 

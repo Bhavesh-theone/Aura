@@ -156,7 +156,8 @@ export function DashboardOverview() {
                 ))}
               </div>
               <ul className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5">
-                {classes.slice(0, 6).map(([c, n], i) => (
+                {/* Every class: there are seven, and the bar above shows them all. */}
+                {classes.map(([c, n], i) => (
                   <li key={c} className="flex items-center gap-1.5 text-[12px]">
                     <span className="h-2 w-2 rounded-[2px]" style={{ background: CLASS_COLORS[i % CLASS_COLORS.length] }} />
                     <span className="truncate text-fg-2">{CLASS_LABEL[c] ?? c}</span>

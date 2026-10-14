@@ -1,6 +1,6 @@
 "use client";
 
-import { CornerUpLeft, Flag, Mail, Plus, X } from "lucide-react";
+import { CornerUpLeft, Flag, Mail, Plus, ShieldAlert, X } from "lucide-react";
 import { useState } from "react";
 import { WHO_CAN } from "@/features/auth/roles";
 import { useCan } from "@/features/auth/useCan";
@@ -582,6 +582,13 @@ export function HistoryTab({ deal }: { deal: DealDetail }) {
               <span className="font-medium text-fg">{stageLabel(h.to_stage)}</span>
               {h.is_regression ? (
                 <Badge tone="warning"><CornerUpLeft className="h-3 w-3" /> Regression</Badge>
+              ) : null}
+              {h.overridden?.length ? (
+                <Tip label={`Overridden: ${h.overridden.join(", ")} · the justification is in the audit trail and the export`}>
+                  <span tabIndex={0} className="outline-none">
+                    <Badge tone="warning"><ShieldAlert className="h-3 w-3" /> Override</Badge>
+                  </span>
+                </Tip>
               ) : null}
               {h.reason_code ? <span className="font-mono text-[11px] text-muted">{h.reason_code}</span> : null}
             </span>
