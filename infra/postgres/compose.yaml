@@ -1,0 +1,33 @@
+# Aura's database: PostgreSQL 16 + pgvector. Works with `podman compose` and `docker compose`.
+#
+#   podman compose --env-file ../../backend/.env -f infra/postgres/compose.yaml up -d
+#
+# scripts/db.ps1 runs the same container with podman directly (no compose provider needed)
+# and is the documented path. Passwords come from backend/.env (gitignored); the defaults
+# below are for a local, single-user machine only.
+name: aura
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg16
+    container_name: aura-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${AURA_PG_SUPERUSER_PASSWORD:-aura_super_dev}
+      POSTGRES_DB: aura
+      AURA_PG_OWNER_PASSWORD: ${AURA_PG_OWNER_PASSWORD:-aura_owner_dev}
+      AURA_PG_APP_PASSWORD: ${AURA_PG_APP_PASSWORD:-aura_app_dev}
+    ports:
+      - "5433:5432"
+    volumes:
+      - aura-pg-data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aura"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  aura-pg-data:
+    name: aura-pg-data

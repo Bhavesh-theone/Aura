@@ -1,0 +1,129 @@
+{
+ "description": "Deal-intake extraction golden set: two fictional deal packs (Project Kaveri, a listed NCD raise; Project Nilgiri, an M&A sale) with the values a correct intake fills in. 'equals' compares normalised values (amounts in whole rupees, 0.5% tolerance), 'contains' a case-insensitive substring, 'includes' list members.",
+ "packs": [
+  {
+   "id": "kaveri",
+   "dir": "tests/fixtures/parsing",
+   "files": [
+    "kaveri_audited_financials_fy24.pdf",
+    "kaveri_ncd_term_sheet.pdf",
+    "kaveri_borrowings_schedule_scanned.pdf",
+    "kaveri_board_resolution_scanned.pdf",
+    "kaveri_information_memorandum.docx",
+    "kaveri_financial_model.xlsx",
+    "kaveri_teaser.pptx"
+   ],
+   "expected": {
+    "company_name": {
+     "equals": "Kaveri Precision Components Private Limited"
+    },
+    "cin": {
+     "equals": "U29253MH2011PTC215478"
+    },
+    "pan": {
+     "equals": "AAFCK4821M"
+    },
+    "registered_office": {
+     "contains": "Chakan"
+    },
+    "deal_name": {
+     "equals": "Project Kaveri"
+    },
+    "transaction_class": {
+     "equals": "DEBT"
+    },
+    "ticket_size_inr": {
+     "equals": 1500000000
+    },
+    "fiscal_year": {
+     "equals": "FY24"
+    },
+    "revenue_inr": {
+     "equals": 4123800000
+    },
+    "ebitda_inr": {
+     "equals": 681500000
+    },
+    "pat_inr": {
+     "equals": 319300000
+    },
+    "net_debt_inr": {
+     "equals": 964000000
+    },
+    "tenor_months": {
+     "equals": 60
+    },
+    "coupon_pct": {
+     "equals": 11.25
+    },
+    "security": {
+     "contains": "exclusive charge"
+    },
+    "governing_law": {
+     "contains": "India"
+    },
+    "regulatory_flags": {
+     "includes": [
+      "SEBI"
+     ]
+    },
+    "profile.amount_inr": {
+     "equals": 1500000000
+    },
+    "profile.facility_type": {
+     "equals": "ncd"
+    }
+   },
+   "probe_conflict": {
+    "field": "revenue_inr",
+    "filename": "kaveri_revised_teaser.md",
+    "text": "# Project Kaveri - revised teaser\n\nRevenue from operations of ₹415.20 crore in FY24 (management accounts).\n"
+   }
+  },
+  {
+   "id": "nilgiri",
+   "dir": "tests/fixtures/ingest",
+   "files": [
+    "nilgiri_information_memorandum.pdf",
+    "nilgiri_spa_draft.docx",
+    "nilgiri_financial_model.xlsx",
+    "nilgiri_management_presentation.pptx",
+    "nilgiri_board_minutes.md"
+   ],
+   "expected": {
+    "company_name": {
+     "equals": "Kaveri Agro Foods Private Limited"
+    },
+    "cin": {
+     "equals": "U15400TN2009PTC071234"
+    },
+    "deal_name": {
+     "equals": "Project Nilgiri"
+    },
+    "transaction_class": {
+     "equals": "MNA"
+    },
+    "fiscal_year": {
+     "equals": "FY25"
+    },
+    "revenue_inr": {
+     "equals": 5520000000
+    },
+    "ebitda_inr": {
+     "equals": 784000000
+    },
+    "pat_inr": {
+     "equals": 381000000
+    },
+    "stake_pct": {
+     "equals": 76
+    },
+    "regulatory_flags": {
+     "includes": [
+      "CCI"
+     ]
+    }
+   }
+  }
+ ]
+}

@@ -1,5 +1,6 @@
-import { ApprovalsWorkspace } from "@/features/approvals/components/ApprovalsWorkspace";
+import { redirect } from "next/navigation";
 
-export default function ApprovalsPage() {
-  return <ApprovalsWorkspace />;
+/** Old route name — kept so bookmarks and muscle memory still land. */
+export default function ApprovalsRedirect() {
+  redirect("/decisions");
 }

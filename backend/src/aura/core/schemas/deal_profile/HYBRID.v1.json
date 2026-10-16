@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:deal_profile/HYBRID/v1",
+  "title": "Hybrid deal profile",
+  "description": "Terms of a convertible or mezzanine instrument.",
+  "x-transaction-class": "HYBRID",
+  "x-schema-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "instrument": {
+      "type": "string",
+      "enum": [
+        "ccd",
+        "ocd",
+        "ccps",
+        "ocps",
+        "mezzanine",
+        "fccb",
+        "warrants"
+      ],
+      "title": "Instrument",
+      "description": "Hybrid instrument issued.",
+      "x-enum-labels": {
+        "ccd": "Compulsorily convertible debentures",
+        "ocd": "Optionally convertible debentures",
+        "ccps": "Compulsorily convertible preference shares",
+        "ocps": "Optionally convertible preference shares",
+        "mezzanine": "Mezzanine debt",
+        "fccb": "Foreign currency convertible bonds",
+        "warrants": "Warrants"
+      }
+    },
+    "amount_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Issue size",
+      "description": "Total instrument amount. In Indian rupees (INR), not crore or lakh."
+    },
+    "coupon_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 50,
+      "title": "Coupon (% p.a.)",
+      "description": "Cash coupon or dividend rate."
+    },
+    "redemption_premium_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "title": "Redemption premium (% IRR)",
+      "description": "Yield to the holder if not converted."
+    },
+    "tenor_months": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Tenor (months)",
+      "description": "Contractual tenor in months.",
+      "maximum": 480
+    },
+    "conversion_terms": {
+      "type": "object",
+      "title": "Conversion terms",
+      "description": "How and when the instrument converts.",
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "type": "string",
+          "enum": [
+            "fixed_price",
+            "valuation_cap",
+            "discount_to_next_round",
+            "formula"
+          ],
+          "title": "Pricing basis",
+          "description": "How the conversion price is set."
+        },
+        "conversion_price_inr": {
+          "type": "number",
+          "minimum": 0,
+          "title": "Conversion price",
+          "description": "Price per equity share. In Indian rupees (INR), not crore or lakh."
+        },
+        "valuation_cap_inr": {
+          "type": "number",
+          "minimum": 0,
+          "title": "Valuation cap",
+          "description": "Pre-money cap on conversion. In Indian rupees (INR), not crore or lakh."
+        },
+        "discount_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "title": "Discount (%)",
+          "description": "Discount to the next priced round."
+        },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "next_round",
+            "ipo",
+            "maturity",
+            "holder_option",
+            "issuer_option"
+          ],
+          "title": "Trigger",
+          "description": "Event that causes conversion."
+        },
+        "long_stop_months": {
+          "type": "integer",
+          "minimum": 1,
+          "title": "Long-stop (months)",
+          "description": "Latest conversion date from issue.",
+          "maximum": 240
+        }
+      }
+    },
+    "fema_pricing_compliant": {
+      "type": "boolean",
+      "title": "FEMA pricing compliant",
+      "description": "Conversion price meets FEMA pricing guidelines."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000,
+      "title": "Notes",
+      "description": "Free-text notes on the deal terms."
+    }
+  }
+}

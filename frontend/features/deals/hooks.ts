@@ -1,11 +1,11 @@
 "use client";
 
-import { useResource } from "@/shared/lib/useResource";
+import { dealListEvents } from "@/shared/api/events";
+import { useApi } from "@/shared/lib/useApi";
 import { listDeals } from "./api";
-import { sampleDeals } from "./sample";
 import type { Deal } from "./types";
 
 export function useDeals() {
-  const resource = useResource<Deal[]>(listDeals, sampleDeals, [], { pollMs: 30000, sampleOnMissing: true });
-  return { ...resource, deals: resource.data };
+  const r = useApi<Deal[]>(listDeals, [], [], { live: dealListEvents });
+  return { ...r, deals: r.data };
 }

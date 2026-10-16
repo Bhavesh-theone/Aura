@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:deal_profile/JV/v1",
+  "title": "Joint venture deal profile",
+  "description": "Terms of a joint venture with a partner.",
+  "x-transaction-class": "JV",
+  "x-schema-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "partner_name": {
+      "type": "string",
+      "maxLength": 200,
+      "title": "Partner",
+      "description": "Joint venture partner's name."
+    },
+    "partner_country": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}$",
+      "title": "Partner country",
+      "description": "ISO 3166-1 alpha-2 country code, e.g. DE, JP."
+    },
+    "fema_route": {
+      "type": "string",
+      "enum": [
+        "automatic",
+        "government"
+      ],
+      "title": "FEMA route",
+      "description": "Foreign direct investment route.",
+      "x-enum-labels": {
+        "automatic": "Automatic route",
+        "government": "Government (approval) route"
+      }
+    },
+    "press_note_3": {
+      "type": "boolean",
+      "title": "Press Note 3",
+      "description": "Investor is from (or beneficially owned in) a country sharing a land border with India: needs government approval."
+    },
+    "equity_split": {
+      "type": "object",
+      "title": "Equity split",
+      "description": "JV shareholding, in %.",
+      "additionalProperties": false,
+      "properties": {
+        "client_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "title": "Client %",
+          "description": "Our client's shareholding."
+        },
+        "partner_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "title": "Partner %",
+          "description": "The partner's shareholding."
+        },
+        "others_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "title": "Others %",
+          "description": "Anyone else."
+        }
+      }
+    },
+    "vehicle": {
+      "type": "string",
+      "enum": [
+        "private_limited",
+        "llp",
+        "contractual"
+      ],
+      "title": "JV vehicle",
+      "description": "Legal form of the JV."
+    },
+    "initial_capital_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Initial capital",
+      "description": "Capital committed at formation. In Indian rupees (INR), not crore or lakh."
+    },
+    "sector": {
+      "type": "string",
+      "maxLength": 120,
+      "title": "Sector",
+      "description": "JV's business sector."
+    },
+    "technology_licence": {
+      "type": "boolean",
+      "title": "Technology licence",
+      "description": "Partner licenses technology."
+    },
+    "deadlock_mechanism": {
+      "type": "string",
+      "enum": [
+        "escalation",
+        "arbitration",
+        "put_call",
+        "russian_roulette",
+        "texas_shoot_out",
+        "none"
+      ],
+      "title": "Deadlock mechanism",
+      "description": "How board deadlocks are resolved."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000,
+      "title": "Notes",
+      "description": "Free-text notes on the deal terms."
+    }
+  }
+}

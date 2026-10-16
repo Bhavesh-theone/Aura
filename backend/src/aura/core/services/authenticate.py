@@ -10,9 +10,10 @@ def authenticate(
     users: UserRepository,
     verify: Callable[[str, str], bool],
 ) -> User | None:
-    """Return the user when credentials are valid, else None. No framework imports."""
+    """Return the user when credentials are valid and the account is active, else None.
+    No framework imports."""
     user = users.get_by_username(username)
-    if user is None:
+    if user is None or not user.active:
         return None
     if not verify(password, user.password_hash):
         return None

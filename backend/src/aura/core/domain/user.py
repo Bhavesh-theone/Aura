@@ -9,3 +9,4 @@ class User:
     username: str
     password_hash: str
     role: Role
+    active: bool = True

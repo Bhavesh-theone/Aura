@@ -34,3 +34,10 @@ def test_authenticate_returns_none_on_bad_password():
 
 def test_authenticate_returns_none_for_unknown_user():
     assert authenticate("nobody", "pw", FakeUserRepo(None), always_true) is None
+
+
+def test_authenticate_refuses_an_inactive_user_even_with_the_right_password():
+    user = User(id=1, username="asha", password_hash="x", role=Role.ANALYST, active=False)
+    assert authenticate("asha", "pw", FakeUserRepo(user), always_true) is None
+    user.active = True
+    assert authenticate("asha", "pw", FakeUserRepo(user), always_true) == user

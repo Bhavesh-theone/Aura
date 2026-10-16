@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:deal_profile/MNA/v1",
+  "title": "M&A deal profile",
+  "description": "Terms of an acquisition, merger or divestment.",
+  "x-transaction-class": "MNA",
+  "x-schema-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "structure": {
+      "type": "string",
+      "enum": [
+        "share_purchase",
+        "asset_purchase",
+        "merger",
+        "demerger",
+        "slump_sale",
+        "scheme_of_arrangement",
+        "ibc_resolution_plan",
+        "open_offer"
+      ],
+      "title": "Structure",
+      "description": "Legal form of the transaction.",
+      "x-enum-labels": {
+        "share_purchase": "Share purchase",
+        "asset_purchase": "Asset purchase",
+        "merger": "Merger (scheme)",
+        "demerger": "Demerger",
+        "slump_sale": "Slump sale",
+        "scheme_of_arrangement": "Scheme of arrangement",
+        "ibc_resolution_plan": "IBC resolution plan",
+        "open_offer": "SEBI SAST open offer"
+      }
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "buy_side",
+        "sell_side"
+      ],
+      "title": "Mandate side",
+      "description": "Whom we advise."
+    },
+    "stake_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "title": "Stake (%)",
+      "description": "Percentage of the target's equity being acquired."
+    },
+    "enterprise_value_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Enterprise value",
+      "description": "Headline enterprise value. In Indian rupees (INR), not crore or lakh."
+    },
+    "equity_value_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Equity value",
+      "description": "Equity value for the stake. In Indian rupees (INR), not crore or lakh."
+    },
+    "ev_ebitda_multiple": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 200,
+      "title": "EV / EBITDA (x)",
+      "description": "Implied EV / trailing EBITDA multiple."
+    },
+    "consideration": {
+      "type": "string",
+      "enum": [
+        "cash",
+        "share_swap",
+        "mixed",
+        "deferred",
+        "earn_out"
+      ],
+      "title": "Consideration",
+      "description": "Form of consideration."
+    },
+    "cci_route": {
+      "type": "string",
+      "enum": [
+        "not_notifiable",
+        "green_channel",
+        "form_i",
+        "form_ii"
+      ],
+      "title": "CCI route",
+      "description": "Competition Commission of India filing route.",
+      "x-enum-labels": {
+        "not_notifiable": "Not notifiable",
+        "green_channel": "Green channel",
+        "form_i": "Form I",
+        "form_ii": "Form II"
+      }
+    },
+    "target_listed": {
+      "type": "boolean",
+      "title": "Target listed",
+      "description": "Target is listed on a stock exchange."
+    },
+    "open_offer_triggered": {
+      "type": "boolean",
+      "title": "Open offer triggered",
+      "description": "SEBI SAST open offer obligation is triggered."
+    },
+    "nclt_approval": {
+      "type": "boolean",
+      "title": "NCLT approval",
+      "description": "Needs NCLT sanction (scheme or IBC)."
+    },
+    "target_sector": {
+      "type": "string",
+      "maxLength": 120,
+      "title": "Target sector",
+      "description": "Target's business sector."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000,
+      "title": "Notes",
+      "description": "Free-text notes on the deal terms."
+    }
+  }
+}

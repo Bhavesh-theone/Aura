@@ -1,11 +1,22 @@
 import { API_BASE } from "./client";
 
+/** Every event type the backend publishes (core/services/*, core/services/notifying_audit.py). */
 export type EventType =
   | "job_submitted"
-  | "approval_required"
-  | "approval_decided"
   | "job_complete"
-  | "job_failed";
+  | "job_failed"
+  | "handoff_created"
+  | "handoff_resolved"
+  | "handoff_escalated"
+  | "entity_changed";
+
+/** core/policy/entity_policy.py ENTITY_KINDS. */
+export const ENTITY_KINDS = ["deal", "document", "diligence", "condition", "handoff", "job", "finding", "extraction", "signoff"] as const;
+export type EntityKind = (typeof ENTITY_KINDS)[number];
+
+export type JobEventPayload = { job_id: number; deal_id: number | null };
+export type HandoffEventPayload = { handoff_id: number; job_id: number | null; deal_id: number | null; approved?: boolean };
+export type EntityChangedPayload = { kind: EntityKind; deal_id: number | null };
 
 export type YukiEvent = { type: EventType; payload: Record<string, unknown> };
 
@@ -20,6 +31,28 @@ function wsUrl(token: string) {
   const base =
     process.env.NEXT_PUBLIC_WS_BASE?.replace(/\/$/, "") || API_BASE.replace(/^http/, "ws");
   return `${base}/ws/events?token=${encodeURIComponent(token)}`;
+}
+
+/**
+ * Close a socket we no longer want, with no reconnect and no handlers firing. A socket
+ * still CONNECTING is closed once it opens: closing it mid-handshake makes the browser
+ * log "WebSocket is closed before the connection is established" (it happened on every
+ * page load in dev, where StrictMode mounts the events effect twice).
+ */
+function closeQuietly(socket: WebSocket) {
+  socket.onclose = null;
+  socket.onerror = null;
+  socket.onmessage = null;
+  if (socket.readyState === WebSocket.CONNECTING) {
+    socket.onopen = () => socket.close();
+    return;
+  }
+  socket.onopen = null;
+  try {
+    socket.close();
+  } catch {
+    /* already closing */
+  }
 }
 
 /**
@@ -52,20 +85,22 @@ class EventSocket {
     this.open();
   }
 
+  /** Reconnect now (e.g. the server just came back) instead of waiting out the backoff. */
+  kick() {
+    if (this.stopped || this.status === "open" || this.status === "connecting") return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.retries = 0;
+    this.open();
+  }
+
   /** Close the current socket without triggering a reconnect. */
   private teardown() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.retries = 0;
     if (this.socket) {
-      this.socket.onclose = null;
-      this.socket.onerror = null;
-      this.socket.onmessage = null;
-      try {
-        this.socket.close();
-      } catch {
-        /* already closing */
-      }
+      closeQuietly(this.socket);
       this.socket = null;
     }
   }
@@ -98,7 +133,7 @@ class EventSocket {
       try {
         const data = JSON.parse(String(raw.data));
         if (data && typeof data.type === "string") {
-          parsed = { type: data.type as EventType, payload: data.payload ?? {} };
+          parsed = { type: data.type, payload: data.payload ?? {} };
         }
       } catch {
         return;
@@ -136,12 +171,7 @@ class EventSocket {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.socket) {
-      this.socket.onclose = null;
-      try {
-        this.socket.close();
-      } catch {
-        /* ignore */
-      }
+      closeQuietly(this.socket);
       this.socket = null;
     }
     this.setStatus("idle");
@@ -149,13 +179,17 @@ class EventSocket {
 
   onEvent(listener: EventListener) {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   onStatus(listener: StatusListener) {
     this.statusListeners.add(listener);
     listener(this.status);
-    return () => this.statusListeners.delete(listener);
+    return () => {
+      this.statusListeners.delete(listener);
+    };
   }
 }
 
