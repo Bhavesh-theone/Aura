@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:deal_profile/ALLIANCE/v1",
+  "title": "Strategic alliance deal profile",
+  "description": "Terms of a commercial alliance between companies.",
+  "x-transaction-class": "ALLIANCE",
+  "x-schema-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "alliance_type": {
+      "type": "string",
+      "enum": [
+        "distribution",
+        "licensing",
+        "co_marketing",
+        "technology",
+        "supply",
+        "manufacturing",
+        "franchise"
+      ],
+      "title": "Alliance type",
+      "description": "Nature of the alliance."
+    },
+    "exclusivity": {
+      "type": "boolean",
+      "title": "Exclusive",
+      "description": "Either side grants exclusivity."
+    },
+    "territory": {
+      "type": "array",
+      "title": "Territory",
+      "description": "States, regions or countries covered.",
+      "items": {
+        "type": "string",
+        "maxLength": 120,
+        "title": "Territory",
+        "description": "One state, region or country."
+      },
+      "maxItems": 50,
+      "uniqueItems": true
+    },
+    "term_months": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Term (months)",
+      "description": "Initial term of the agreement.",
+      "maximum": 600
+    },
+    "minimum_commitment_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Minimum commitment",
+      "description": "Minimum purchase or revenue commitment per year. In Indian rupees (INR), not crore or lakh."
+    },
+    "revenue_share_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "title": "Revenue share (%)",
+      "description": "Share of revenue to the partner."
+    },
+    "royalty_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "title": "Royalty (%)",
+      "description": "Royalty on net sales (licensing)."
+    },
+    "renewal": {
+      "type": "string",
+      "enum": [
+        "automatic",
+        "mutual",
+        "none"
+      ],
+      "title": "Renewal",
+      "description": "How the term renews."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000,
+      "title": "Notes",
+      "description": "Free-text notes on the deal terms."
+    }
+  }
+}

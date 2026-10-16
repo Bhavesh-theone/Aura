@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:deal_profile/DEBT/v1",
+  "title": "Debt deal profile",
+  "description": "Terms of a debt raise: facility, tenor, pricing, security, covenants and credit rating.",
+  "x-transaction-class": "DEBT",
+  "x-schema-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "facility_type": {
+      "type": "string",
+      "enum": [
+        "term_loan",
+        "working_capital",
+        "ncd",
+        "ecb",
+        "structured",
+        "project_finance",
+        "lease_rental_discounting",
+        "supply_chain_finance",
+        "warehouse_receipt_finance"
+      ],
+      "title": "Facility type",
+      "description": "Kind of debt facility.",
+      "x-enum-labels": {
+        "term_loan": "Term loan",
+        "working_capital": "Working capital (CC/OD/WCDL)",
+        "ncd": "Non-convertible debentures",
+        "ecb": "External commercial borrowing",
+        "structured": "Structured credit",
+        "project_finance": "Project finance",
+        "lease_rental_discounting": "Lease rental discounting",
+        "supply_chain_finance": "Supply chain finance",
+        "warehouse_receipt_finance": "Warehouse receipt finance"
+      }
+    },
+    "amount_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Facility amount",
+      "description": "Total facility size sought. In Indian rupees (INR), not crore or lakh."
+    },
+    "tenor_months": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Tenor (months)",
+      "description": "Contractual tenor in months.",
+      "maximum": 480
+    },
+    "moratorium_months": {
+      "type": "integer",
+      "minimum": 0,
+      "title": "Moratorium (months)",
+      "description": "Principal moratorium from first drawdown.",
+      "maximum": 120
+    },
+    "repayment": {
+      "type": "string",
+      "enum": [
+        "bullet",
+        "equated",
+        "ballooning",
+        "structured",
+        "on_demand"
+      ],
+      "title": "Repayment profile",
+      "description": "How principal is repaid."
+    },
+    "rate_type": {
+      "type": "string",
+      "enum": [
+        "fixed",
+        "floating"
+      ],
+      "title": "Rate type",
+      "description": "Fixed or floating interest."
+    },
+    "benchmark": {
+      "type": "string",
+      "enum": [
+        "repo",
+        "mclr",
+        "eblr",
+        "t_bill",
+        "sofr",
+        "none"
+      ],
+      "title": "Benchmark",
+      "description": "Benchmark for a floating rate.",
+      "x-enum-labels": {
+        "repo": "RBI repo rate",
+        "mclr": "MCLR",
+        "eblr": "External benchmark lending rate",
+        "t_bill": "T-bill",
+        "sofr": "SOFR (ECB)",
+        "none": "None"
+      }
+    },
+    "interest_rate_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 50,
+      "title": "Interest rate (% p.a.)",
+      "description": "All-in interest rate or indicative pricing, per annum."
+    },
+    "security_package": {
+      "type": "object",
+      "title": "Security package",
+      "description": "Security and credit support offered.",
+      "additionalProperties": false,
+      "properties": {
+        "primary": {
+          "type": "string",
+          "maxLength": 500,
+          "title": "Primary security",
+          "description": "e.g. Hypothecation of current assets, mortgage of plant."
+        },
+        "collateral": {
+          "type": "array",
+          "title": "Collateral",
+          "description": "Additional collateral items.",
+          "items": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Collateral item",
+            "description": "One collateral item."
+          },
+          "maxItems": 30
+        },
+        "security_cover_x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "title": "Security cover (x)",
+          "description": "Asset cover as a multiple of the facility."
+        },
+        "personal_guarantee": {
+          "type": "boolean",
+          "title": "Personal guarantee",
+          "description": "Promoters give personal guarantees."
+        },
+        "corporate_guarantee": {
+          "type": "boolean",
+          "title": "Corporate guarantee",
+          "description": "A group company gives a corporate guarantee."
+        },
+        "ranking": {
+          "type": "string",
+          "enum": [
+            "first_pari_passu",
+            "exclusive",
+            "second",
+            "subordinated",
+            "unsecured"
+          ],
+          "title": "Ranking",
+          "description": "Ranking of the charge."
+        }
+      }
+    },
+    "covenants": {
+      "type": "array",
+      "title": "Covenants",
+      "description": "Financial and other covenants.",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "title": "Covenant",
+        "description": "One covenant.",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Name",
+            "description": "e.g. DSCR, Net debt / EBITDA."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "financial",
+              "information",
+              "affirmative",
+              "negative"
+            ],
+            "title": "Kind",
+            "description": "Covenant category."
+          },
+          "threshold": {
+            "type": "string",
+            "maxLength": 60,
+            "title": "Threshold",
+            "description": "e.g. >= 1.25x, <= 3.0x."
+          },
+          "test_frequency": {
+            "type": "string",
+            "enum": [
+              "quarterly",
+              "half_yearly",
+              "annual"
+            ],
+            "title": "Test frequency",
+            "description": "How often it is tested."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    "rating": {
+      "type": "object",
+      "title": "Credit rating",
+      "description": "Current or expected rating of the issuer or instrument.",
+      "additionalProperties": false,
+      "properties": {
+        "agency": {
+          "type": "string",
+          "enum": [
+            "CRISIL",
+            "ICRA",
+            "CARE",
+            "India Ratings",
+            "Acuite",
+            "Brickwork",
+            "Infomerics"
+          ],
+          "title": "Rating agency",
+          "description": "SEBI-registered credit rating agency."
+        },
+        "grade": {
+          "type": "string",
+          "enum": [
+            "AAA",
+            "AA+",
+            "AA",
+            "AA-",
+            "A+",
+            "A",
+            "A-",
+            "BBB+",
+            "BBB",
+            "BBB-",
+            "BB+",
+            "BB",
+            "BB-",
+            "B+",
+            "B",
+            "B-",
+            "C",
+            "D"
+          ],
+          "title": "Grade",
+          "description": "Long-term rating grade."
+        },
+        "outlook": {
+          "type": "string",
+          "enum": [
+            "stable",
+            "positive",
+            "negative",
+            "developing"
+          ],
+          "title": "Outlook",
+          "description": "Rating outlook."
+        },
+        "rated_on": {
+          "type": "string",
+          "format": "date",
+          "title": "Rated on",
+          "description": "Date of the rating action. ISO 8601 date (YYYY-MM-DD)."
+        }
+      },
+      "required": [
+        "agency",
+        "grade"
+      ]
+    },
+    "lenders_targeted": {
+      "type": "integer",
+      "minimum": 0,
+      "title": "Lenders targeted",
+      "description": "Number of banks, NBFCs or funds approached.",
+      "maximum": 200
+    },
+    "end_use": {
+      "type": "string",
+      "maxLength": 500,
+      "title": "End use",
+      "description": "Purpose of the borrowing (RBI end-use)."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000,
+      "title": "Notes",
+      "description": "Free-text notes on the deal terms."
+    }
+  }
+}

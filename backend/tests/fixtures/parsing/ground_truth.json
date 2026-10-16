@@ -1,0 +1,1110 @@
+{
+ "company": "Kaveri Precision Components Private Limited",
+ "documents": {
+  "kaveri_audited_financials_fy24.pdf": {
+   "kind": "pdf_digital",
+   "pages": 2,
+   "text": "Kaveri Precision Components Private Limited\nCIN: U29253MH2011PTC215478 | PAN: AAFCK4821M | Registered office: Plot 42, MIDC Chakan, Pune 410501\nIndependent Auditor's Report\nWe have audited the accompanying financial statements of Kaveri Precision Components Private Limited, which comprise the Balance Sheet as at 31 March 2024 and the Statement of Profit and Loss for the year then ended. In our opinion, the financial statements give a true and fair view in conformity with the Indian Accounting Standards (Ind AS).\nStatement of Profit and Loss for the year ended 31 March 2024\n(All amounts in ₹ crore, unless otherwise stated)\nParticulars Note Year ended 31 March\nFY24 FY23\nRevenue from operations 24 412.38 356.91\nOther income 25 4.17 3.62\nTotal income 416.55 360.53\nCost of materials consumed 26 231.46 204.83\nEmployee benefits expense 27 48.92 42.17\nOther expenses 28 63.85 57.39\nEBITDA 68.15 52.52\nDepreciation and amortisation expense 29 14.26 12.88\nFinance costs 30 11.73 10.95\nExceptional items 31 (3.42) 1.15\nProfit before tax 42.91 33.46\nTax expense 32 10.98 8.61\nProfit for the year 31.93 24.85\nOther comprehensive income (0.86) 0.42\nTotal comprehensive income 31.07 25.27\nBalance Sheet as at 31 March 2024\n(All amounts in ₹ crore, unless otherwise stated)\nParticulars Note As at 31 March\n2024 2023\nProperty, plant and equipment 4 186.42 172.09\nCapital work-in-progress 4 12.37 8.64\nInventories 9 74.18 66.25\nTrade receivables 10 88.63 79.40\nCash and cash equivalents 11 21.35 18.72\nOther current assets 12 15.06 13.91\nTotal assets 398.01 359.01\nEquity share capital 13 24.00 24.00\nOther equity 14 162.88 131.81\nLong-term borrowings 15 84.60 92.15\nShort-term borrowings 16 33.15 28.40\nTrade payables 17 71.46 63.02\nOther current liabilities 18 21.92 19.63\nTotal equity and liabilities 398.01 359.01\nNotes to the financial statements\nNet debt as at 31 March 2024 is ₹96.40 crore (long-term borrowings of ₹84.60 crore and short-term borrowings of ₹33.15 crore, less cash and cash equivalents of ₹21.35 crore). Exceptional items of ₹3.42 crore relate to a one-time voluntary retirement scheme at the Hosur plant.",
+   "headings": [
+    "Kaveri Precision Components Private Limited",
+    "Independent Auditor's Report",
+    "Statement of Profit and Loss for the year ended 31 March 2024",
+    "Balance Sheet as at 31 March 2024",
+    "Notes to the financial statements"
+   ],
+   "tables": [
+    {
+     "name": "pl",
+     "grid": [
+      [
+       "Particulars",
+       "Note",
+       "Year ended 31 March",
+       ""
+      ],
+      [
+       "",
+       "",
+       "FY24",
+       "FY23"
+      ],
+      [
+       "Revenue from operations",
+       "24",
+       "412.38",
+       "356.91"
+      ],
+      [
+       "Other income",
+       "25",
+       "4.17",
+       "3.62"
+      ],
+      [
+       "Total income",
+       "",
+       "416.55",
+       "360.53"
+      ],
+      [
+       "Cost of materials consumed",
+       "26",
+       "231.46",
+       "204.83"
+      ],
+      [
+       "Employee benefits expense",
+       "27",
+       "48.92",
+       "42.17"
+      ],
+      [
+       "Other expenses",
+       "28",
+       "63.85",
+       "57.39"
+      ],
+      [
+       "EBITDA",
+       "",
+       "68.15",
+       "52.52"
+      ],
+      [
+       "Depreciation and amortisation expense",
+       "29",
+       "14.26",
+       "12.88"
+      ],
+      [
+       "Finance costs",
+       "30",
+       "11.73",
+       "10.95"
+      ],
+      [
+       "Exceptional items",
+       "31",
+       "(3.42)",
+       "1.15"
+      ],
+      [
+       "Profit before tax",
+       "",
+       "42.91",
+       "33.46"
+      ],
+      [
+       "Tax expense",
+       "32",
+       "10.98",
+       "8.61"
+      ],
+      [
+       "Profit for the year",
+       "",
+       "31.93",
+       "24.85"
+      ],
+      [
+       "Other comprehensive income",
+       "",
+       "(0.86)",
+       "0.42"
+      ],
+      [
+       "Total comprehensive income",
+       "",
+       "31.07",
+       "25.27"
+      ]
+     ]
+    },
+    {
+     "name": "bs",
+     "grid": [
+      [
+       "Particulars",
+       "Note",
+       "As at 31 March",
+       ""
+      ],
+      [
+       "",
+       "",
+       "2024",
+       "2023"
+      ],
+      [
+       "Property, plant and equipment",
+       "4",
+       "186.42",
+       "172.09"
+      ],
+      [
+       "Capital work-in-progress",
+       "4",
+       "12.37",
+       "8.64"
+      ],
+      [
+       "Inventories",
+       "9",
+       "74.18",
+       "66.25"
+      ],
+      [
+       "Trade receivables",
+       "10",
+       "88.63",
+       "79.40"
+      ],
+      [
+       "Cash and cash equivalents",
+       "11",
+       "21.35",
+       "18.72"
+      ],
+      [
+       "Other current assets",
+       "12",
+       "15.06",
+       "13.91"
+      ],
+      [
+       "Total assets",
+       "",
+       "398.01",
+       "359.01"
+      ],
+      [
+       "Equity share capital",
+       "13",
+       "24.00",
+       "24.00"
+      ],
+      [
+       "Other equity",
+       "14",
+       "162.88",
+       "131.81"
+      ],
+      [
+       "Long-term borrowings",
+       "15",
+       "84.60",
+       "92.15"
+      ],
+      [
+       "Short-term borrowings",
+       "16",
+       "33.15",
+       "28.40"
+      ],
+      [
+       "Trade payables",
+       "17",
+       "71.46",
+       "63.02"
+      ],
+      [
+       "Other current liabilities",
+       "18",
+       "21.92",
+       "19.63"
+      ],
+      [
+       "Total equity and liabilities",
+       "",
+       "398.01",
+       "359.01"
+      ]
+     ]
+    }
+   ],
+   "key_fields": {
+    "company_name": [
+     "Kaveri Precision Components Private Limited"
+    ],
+    "cin": [
+     "U29253MH2011PTC215478"
+    ],
+    "pan": [
+     "AAFCK4821M"
+    ],
+    "revenue_fy24": [
+     "412.38"
+    ],
+    "ebitda_fy24": [
+     "68.15"
+    ],
+    "net_debt": [
+     "96.40"
+    ]
+   },
+   "table_fields": [
+    {
+     "field": "revenue_fy24",
+     "table": "pl",
+     "row": "Revenue from operations",
+     "col": "FY24",
+     "value": "412.38"
+    },
+    {
+     "field": "ebitda_fy24",
+     "table": "pl",
+     "row": "EBITDA",
+     "col": "FY24",
+     "value": "68.15"
+    },
+    {
+     "field": "exceptional_fy24",
+     "table": "pl",
+     "row": "Exceptional items",
+     "col": "FY24",
+     "value": "(3.42)"
+    },
+    {
+     "field": "receivables_2024",
+     "table": "bs",
+     "row": "Trade receivables",
+     "col": "2024",
+     "value": "88.63"
+    }
+   ]
+  },
+  "kaveri_ncd_term_sheet.pdf": {
+   "kind": "pdf_digital",
+   "pages": 1,
+   "text": "Indicative Term Sheet – Project Kaveri\nStrictly private and confidential. For discussion purposes only; not an offer.\n1. Issuer\nKaveri Precision Components Private Limited (the \"Issuer\"), a private company incorporated in India with CIN U29253MH2011PTC215478 and PAN AAFCK4821M.\n2. Instrument\nSenior secured, rated, listed, redeemable non-convertible debentures (\"NCDs\") of face value ₹1,00,000 each, issued on a private placement basis.1\n3. Ticket size\nINR 150 crore (Rupees One Hundred and Fifty Crore only), in one or more tranches.\n4. Tenor\n60 months from the Deemed Date of Allotment, with a bullet redemption at par.\n5. Coupon\n11.25% per annum, payable quarterly, on an actual/365 day-count basis.2\n6. Security\nFirst ranking exclusive charge over the movable fixed assets of the Hosur and Chakan plants, with a minimum security cover of 1.25 times the outstanding amount.\n7. Financial covenants\nMinimum DSCR of 1.25x and Net debt to EBITDA not exceeding 2.5x, tested semi-annually on the audited or reviewed financial statements.\n8. Use of proceeds\nRefinancing of existing term loans, capital expenditure on the new machining line and general corporate purposes not exceeding 25% of the issue size.\n9. Conditions precedent\nExecution of the debenture trust deed, creation of security, credit rating of at least A- and receipt of the board and shareholder resolutions.\n10. Governing law and jurisdiction\nThe NCDs shall be governed by the laws of India. The courts and tribunals at Mumbai shall have exclusive jurisdiction.3\n11. Fees\nArranger fee of 0.75% of the issue size, payable on the Deemed Date of Allotment.\n1 The NCDs will be listed on the wholesale debt market segment of BSE Limited.\n2 Step-up of 0.50% per annum for every notch of rating downgrade below A-.\n3 Subject to the arbitration clause in the debenture trust deed.",
+   "headings": [
+    "Indicative Term Sheet – Project Kaveri",
+    "1. Issuer",
+    "2. Instrument",
+    "3. Ticket size",
+    "4. Tenor",
+    "5. Coupon",
+    "6. Security",
+    "7. Financial covenants",
+    "8. Use of proceeds",
+    "9. Conditions precedent",
+    "10. Governing law and jurisdiction",
+    "11. Fees"
+   ],
+   "tables": [],
+   "key_fields": {
+    "company_name": [
+     "Kaveri Precision Components Private Limited"
+    ],
+    "cin": [
+     "U29253MH2011PTC215478"
+    ],
+    "pan": [
+     "AAFCK4821M"
+    ],
+    "ticket_size": [
+     "INR 150 crore"
+    ],
+    "tenor": [
+     "60 months"
+    ],
+    "coupon": [
+     "11.25% per annum"
+    ],
+    "security": [
+     "First ranking exclusive charge"
+    ],
+    "governing_law": [
+     "laws of India"
+    ]
+   },
+   "table_fields": []
+  },
+  "kaveri_borrowings_schedule_scanned.pdf": {
+   "kind": "pdf_scanned",
+   "pages": 1,
+   "text": "Kaveri Precision Components Private Limited\nSchedule of Borrowings as at 31 March 2024\n(All amounts in ₹ crore)\nLender Facility Sanctioned Outstanding Rate Maturity\nState Bank of India Term loan 60.00 42.30 9.10% Mar-2029\nHDFC Bank Term loan 35.00 24.80 9.35% Sep-2028\nAxis Bank Cash credit 25.00 18.65 9.60% Renewable\nICICI Bank WCDL 15.00 14.50 9.25% Jun-2024\nBajaj Finance Equipment loan 20.00 17.50 10.40% Dec-2027\nTotal 155.00 117.75\nNet debt as at 31 March 2024 is ₹96.40 crore after deducting cash and cash equivalents of ₹21.35 crore from gross borrowings of ₹117.75 crore.\nCertified by the Chief Financial Officer on the basis of lender confirmations.",
+   "headings": [
+    "Kaveri Precision Components Private Limited",
+    "Schedule of Borrowings as at 31 March 2024"
+   ],
+   "tables": [
+    {
+     "name": "debt",
+     "grid": [
+      [
+       "Lender",
+       "Facility",
+       "Sanctioned",
+       "Outstanding",
+       "Rate",
+       "Maturity"
+      ],
+      [
+       "State Bank of India",
+       "Term loan",
+       "60.00",
+       "42.30",
+       "9.10%",
+       "Mar-2029"
+      ],
+      [
+       "HDFC Bank",
+       "Term loan",
+       "35.00",
+       "24.80",
+       "9.35%",
+       "Sep-2028"
+      ],
+      [
+       "Axis Bank",
+       "Cash credit",
+       "25.00",
+       "18.65",
+       "9.60%",
+       "Renewable"
+      ],
+      [
+       "ICICI Bank",
+       "WCDL",
+       "15.00",
+       "14.50",
+       "9.25%",
+       "Jun-2024"
+      ],
+      [
+       "Bajaj Finance",
+       "Equipment loan",
+       "20.00",
+       "17.50",
+       "10.40%",
+       "Dec-2027"
+      ],
+      [
+       "Total",
+       "",
+       "155.00",
+       "117.75",
+       "",
+       ""
+      ]
+     ]
+    }
+   ],
+   "key_fields": {
+    "company_name": [
+     "Kaveri Precision Components Private Limited"
+    ],
+    "net_debt": [
+     "96.40"
+    ]
+   },
+   "table_fields": [
+    {
+     "field": "sbi_outstanding",
+     "table": "debt",
+     "row": "State Bank of India",
+     "col": "Outstanding",
+     "value": "42.30"
+    },
+    {
+     "field": "hdfc_rate",
+     "table": "debt",
+     "row": "HDFC Bank",
+     "col": "Rate",
+     "value": "9.35%"
+    },
+    {
+     "field": "total_outstanding",
+     "table": "debt",
+     "row": "Total",
+     "col": "Outstanding",
+     "value": "117.75"
+    }
+   ]
+  },
+  "kaveri_board_resolution_scanned.pdf": {
+   "kind": "pdf_scanned",
+   "pages": 1,
+   "text": "Kaveri Precision Components Private Limited\nCIN: U29253MH2011PTC215478 PAN: AAFCK4821M\nCertified True Copy of the Resolution passed by the Board of Directors\nRESOLVED THAT pursuant to Section 42 and Section 71 of the Companies Act, 2013, the consent of the Board be and is hereby accorded to borrow up to INR 150 crore by issue of secured non-convertible debentures on a private placement basis.\nRESOLVED FURTHER THAT any Director of the Company be and is hereby authorised to sign and execute the debenture trust deed and all related documents.\nDate: 14/06/2024\nPlace: Pune\nName of authorised signatory: Meera Raghunathan\nDIN: 07345128",
+   "headings": [
+    "Kaveri Precision Components Private Limited",
+    "Certified True Copy of the Resolution passed by the Board of Directors"
+   ],
+   "tables": [],
+   "key_fields": {
+    "company_name": [
+     "Kaveri Precision Components Private Limited"
+    ],
+    "cin": [
+     "U29253MH2011PTC215478"
+    ],
+    "pan": [
+     "AAFCK4821M"
+    ],
+    "ticket_size": [
+     "INR 150 crore"
+    ],
+    "signatory_handwritten": [
+     "Meera Raghunathan"
+    ],
+    "date_handwritten": [
+     "14/06/2024"
+    ],
+    "din_handwritten": [
+     "07345128"
+    ]
+   },
+   "table_fields": []
+  },
+  "kaveri_information_memorandum.docx": {
+   "kind": "docx",
+   "pages": null,
+   "text": "Information Memorandum – Project Kaveri\nPrepared for prospective investors in the proposed NCD issue of Kaveri Precision Components Private Limited.\nCompany overview\nHistory\nKaveri Precision Components Private Limited (CIN U29253MH2011PTC215478) was incorporated in 2011 and manufactures precision machined components for two-wheeler and tractor OEMs from plants at Chakan and Hosur.\nOperations\nThe Company operates 146 CNC machining centres and employs 1,240 people. Its top five customers contributed 61% of FY24 revenue.\nShareholding\nThe cap table below is on a fully diluted basis, including the ESOP pool and the Series A compulsorily convertible preference shares.\nShareholding pattern as at 31 March 2024 (fully diluted)\nShareholder Class No. of shares % holding\nRaghunathan Family Trust Equity 1,32,00,000 55.00%\nMeera Raghunathan Equity 24,00,000 10.00%\nDeccan Growth Fund II CCPS Series A 60,00,000 25.00%\nESOP pool Options 12,00,000 5.00%\nOthers Equity 12,00,000 5.00%\nTotal 2,40,00,000 100.00%\nFinancial highlights\nIn FY24 revenue from operations was ₹412.38 crore and EBITDA was ₹68.15 crore (16.5% margin). Net debt as at 31 March 2024 was ₹96.40 crore.\nProposed transaction\nUse of proceeds\nThe INR 150 crore NCD issue will refinance existing term loans and fund the new machining line at Hosur.",
+   "headings": [
+    "Information Memorandum – Project Kaveri",
+    "Company overview",
+    "History",
+    "Operations",
+    "Shareholding",
+    "Financial highlights",
+    "Proposed transaction",
+    "Use of proceeds"
+   ],
+   "tables": [
+    {
+     "name": "cap",
+     "grid": [
+      [
+       "Shareholding pattern as at 31 March 2024 (fully diluted)",
+       "",
+       "",
+       ""
+      ],
+      [
+       "Shareholder",
+       "Class",
+       "No. of shares",
+       "% holding"
+      ],
+      [
+       "Raghunathan Family Trust",
+       "Equity",
+       "1,32,00,000",
+       "55.00%"
+      ],
+      [
+       "Meera Raghunathan",
+       "Equity",
+       "24,00,000",
+       "10.00%"
+      ],
+      [
+       "Deccan Growth Fund II",
+       "CCPS Series A",
+       "60,00,000",
+       "25.00%"
+      ],
+      [
+       "ESOP pool",
+       "Options",
+       "12,00,000",
+       "5.00%"
+      ],
+      [
+       "Others",
+       "Equity",
+       "12,00,000",
+       "5.00%"
+      ],
+      [
+       "Total",
+       "",
+       "2,40,00,000",
+       "100.00%"
+      ]
+     ]
+    }
+   ],
+   "key_fields": {
+    "company_name": [
+     "Kaveri Precision Components Private Limited"
+    ],
+    "cin": [
+     "U29253MH2011PTC215478"
+    ],
+    "revenue_fy24": [
+     "412.38"
+    ],
+    "ebitda_fy24": [
+     "68.15"
+    ],
+    "net_debt": [
+     "96.40"
+    ],
+    "ticket_size": [
+     "INR 150 crore"
+    ]
+   },
+   "table_fields": [
+    {
+     "field": "deccan_holding",
+     "table": "cap",
+     "row": "Deccan Growth Fund II",
+     "col": "% holding",
+     "value": "25.00%"
+    },
+    {
+     "field": "esop_shares",
+     "table": "cap",
+     "row": "ESOP pool",
+     "col": "No. of shares",
+     "value": "12,00,000"
+    }
+   ]
+  },
+  "kaveri_financial_model.xlsx": {
+   "kind": "xlsx",
+   "pages": null,
+   "text": "P&L\nKaveri Precision Components – Financial model (₹ crore)\nParticulars Actual Projections\nFY24A FY25E FY26E\nRevenue from operations 412.38 468.52 531.27\nEBITDA 68.15 79.65 92.43\nEBITDA margin % 16.53 17.01 17.39\nProfit after tax 31.93 38.74 46.12\nDebt\nBorrowings and net debt (₹ crore)\nLender Facility Outstanding FY24 Rate %\nState Bank of India Term loan 42.3 9.1\nHDFC Bank Term loan 24.8 9.35\nAxis Bank Cash credit 18.65 9.6\nICICI Bank WCDL 14.5 9.25\nBajaj Finance Equipment loan 17.5 10.4\nGross debt 117.75\nLess: cash and cash equivalents 21.35\nNet debt 96.4",
+   "headings": [
+    "P&L",
+    "Debt"
+   ],
+   "tables": [
+    {
+     "name": "xl_pl",
+     "grid": [
+      [
+       "Kaveri Precision Components – Financial model (₹ crore)",
+       "",
+       "",
+       ""
+      ],
+      [
+       "Particulars",
+       "Actual",
+       "Projections",
+       ""
+      ],
+      [
+       "",
+       "FY24A",
+       "FY25E",
+       "FY26E"
+      ],
+      [
+       "Revenue from operations",
+       "412.38",
+       "468.52",
+       "531.27"
+      ],
+      [
+       "EBITDA",
+       "68.15",
+       "79.65",
+       "92.43"
+      ],
+      [
+       "EBITDA margin %",
+       "16.53",
+       "17.01",
+       "17.39"
+      ],
+      [
+       "Profit after tax",
+       "31.93",
+       "38.74",
+       "46.12"
+      ]
+     ]
+    },
+    {
+     "name": "xl_debt",
+     "grid": [
+      [
+       "Borrowings and net debt (₹ crore)",
+       "",
+       "",
+       ""
+      ],
+      [
+       "Lender",
+       "Facility",
+       "Outstanding FY24",
+       "Rate %"
+      ],
+      [
+       "State Bank of India",
+       "Term loan",
+       "42.3",
+       "9.1"
+      ],
+      [
+       "HDFC Bank",
+       "Term loan",
+       "24.8",
+       "9.35"
+      ],
+      [
+       "Axis Bank",
+       "Cash credit",
+       "18.65",
+       "9.6"
+      ],
+      [
+       "ICICI Bank",
+       "WCDL",
+       "14.5",
+       "9.25"
+      ],
+      [
+       "Bajaj Finance",
+       "Equipment loan",
+       "17.5",
+       "10.4"
+      ],
+      [
+       "Gross debt",
+       "",
+       "117.75",
+       ""
+      ],
+      [
+       "Less: cash and cash equivalents",
+       "",
+       "21.35",
+       ""
+      ],
+      [
+       "Net debt",
+       "",
+       "96.4",
+       ""
+      ]
+     ]
+    }
+   ],
+   "key_fields": {
+    "revenue_fy24": [
+     "412.38"
+    ],
+    "ebitda_fy24": [
+     "68.15"
+    ],
+    "net_debt": [
+     "96.4",
+     "96.40"
+    ]
+   },
+   "table_fields": [
+    {
+     "field": "ebitda_fy26",
+     "table": "xl_pl",
+     "row": "EBITDA",
+     "col": "FY26E",
+     "value": "92.43"
+    },
+    {
+     "field": "net_debt",
+     "table": "xl_debt",
+     "row": "Net debt",
+     "col": "Outstanding FY24",
+     "value": "96.4"
+    }
+   ]
+  },
+  "kaveri_teaser.pptx": {
+   "kind": "pptx",
+   "pages": 4,
+   "text": "Project Kaveri – Investment Teaser\nStrictly private and confidential\nInvestment highlights\nLeading precision components supplier to two-wheeler and tractor OEMs\nRevenue of ₹412.38 crore in FY24, up 15.5% year on year\nEBITDA of ₹68.15 crore with a 16.5% margin\nNet debt to EBITDA of 1.4x as at 31 March 2024\nEmphasise the 16.5% EBITDA margin and the INR 150 crore NCD ask.\nKey financials\nMetric (₹ crore) FY23 FY24\nRevenue 356.91 412.38\nEBITDA 52.52 68.15\nEBITDA margin 14.7% 16.5%\nPAT 24.85 31.93\nNet debt — 96.40\nTransaction overview\nTicket size: INR 150 crore of senior secured NCDs\nTenor: 60 months; coupon: 11.25% per annum payable quarterly\nSecurity: first ranking exclusive charge over movable fixed assets\nGoverning law: laws of India\nInvestors have asked about the step-up on rating downgrade.",
+   "headings": [
+    "Project Kaveri – Investment Teaser",
+    "Investment highlights",
+    "Key financials",
+    "Transaction overview"
+   ],
+   "tables": [
+    {
+     "name": "teaser",
+     "grid": [
+      [
+       "Metric (₹ crore)",
+       "FY23",
+       "FY24"
+      ],
+      [
+       "Revenue",
+       "356.91",
+       "412.38"
+      ],
+      [
+       "EBITDA",
+       "52.52",
+       "68.15"
+      ],
+      [
+       "EBITDA margin",
+       "14.7%",
+       "16.5%"
+      ],
+      [
+       "PAT",
+       "24.85",
+       "31.93"
+      ],
+      [
+       "Net debt",
+       "—",
+       "96.40"
+      ]
+     ]
+    }
+   ],
+   "key_fields": {
+    "revenue_fy24": [
+     "412.38"
+    ],
+    "ebitda_fy24": [
+     "68.15"
+    ],
+    "net_debt": [
+     "96.40"
+    ],
+    "ticket_size": [
+     "INR 150 crore"
+    ],
+    "tenor": [
+     "60 months"
+    ],
+    "coupon": [
+     "11.25% per annum"
+    ],
+    "security": [
+     "first ranking exclusive charge"
+    ],
+    "governing_law": [
+     "laws of India"
+    ]
+   },
+   "table_fields": [
+    {
+     "field": "ebitda_fy24",
+     "table": "teaser",
+     "row": "EBITDA",
+     "col": "FY24",
+     "value": "68.15"
+    }
+   ]
+  }
+ },
+ "queries": [
+  {
+   "id": "kav-01",
+   "query": "What was revenue from operations in FY24?",
+   "expected": [
+    {
+     "filename": "kaveri_audited_financials_fy24.pdf",
+     "contains": "412.38"
+    },
+    {
+     "filename": "kaveri_financial_model.xlsx",
+     "contains": "412.38"
+    },
+    {
+     "filename": "kaveri_information_memorandum.docx",
+     "contains": "412.38"
+    },
+    {
+     "filename": "kaveri_teaser.pptx",
+     "contains": "412.38"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-02",
+   "query": "exceptional items charge in the statement of profit and loss",
+   "expected": [
+    {
+     "filename": "kaveri_audited_financials_fy24.pdf",
+     "contains": "Exceptional"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-03",
+   "query": "trade receivables as at 31 March 2024",
+   "expected": [
+    {
+     "filename": "kaveri_audited_financials_fy24.pdf",
+     "contains": "88.63"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-04",
+   "query": "net debt",
+   "expected": [
+    {
+     "filename": "kaveri_audited_financials_fy24.pdf",
+     "contains": "96.40"
+    },
+    {
+     "filename": "kaveri_financial_model.xlsx",
+     "contains": "96.4"
+    },
+    {
+     "filename": "kaveri_information_memorandum.docx",
+     "contains": "96.40"
+    },
+    {
+     "filename": "kaveri_teaser.pptx",
+     "contains": "96.40"
+    },
+    {
+     "filename": "kaveri_borrowings_schedule_scanned.pdf",
+     "contains": "96.40"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-05",
+   "query": "coupon rate on the debentures",
+   "expected": [
+    {
+     "filename": "kaveri_ncd_term_sheet.pdf",
+     "contains": "11.25%"
+    },
+    {
+     "filename": "kaveri_teaser.pptx",
+     "contains": "11.25%"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-06",
+   "query": "tenor of the NCD",
+   "expected": [
+    {
+     "filename": "kaveri_ncd_term_sheet.pdf",
+     "contains": "60 months"
+    },
+    {
+     "filename": "kaveri_teaser.pptx",
+     "contains": "60 months"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-07",
+   "query": "security and charge over assets",
+   "expected": [
+    {
+     "filename": "kaveri_ncd_term_sheet.pdf",
+     "contains": "exclusive charge"
+    },
+    {
+     "filename": "kaveri_teaser.pptx",
+     "contains": "exclusive charge"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-08",
+   "query": "governing law and jurisdiction",
+   "expected": [
+    {
+     "filename": "kaveri_ncd_term_sheet.pdf",
+     "contains": "laws of India"
+    },
+    {
+     "filename": "kaveri_teaser.pptx",
+     "contains": "laws of India"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-09",
+   "query": "financial covenants DSCR",
+   "expected": [
+    {
+     "filename": "kaveri_ncd_term_sheet.pdf",
+     "contains": "DSCR"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-10",
+   "query": "State Bank of India term loan outstanding",
+   "expected": [
+    {
+     "filename": "kaveri_borrowings_schedule_scanned.pdf",
+     "contains": "42.30"
+    },
+    {
+     "filename": "kaveri_financial_model.xlsx",
+     "contains": "State Bank"
+    }
+   ],
+   "note": "scanned table (OCR) or model"
+  },
+  {
+   "id": "kav-11",
+   "query": "HDFC Bank interest rate",
+   "expected": [
+    {
+     "filename": "kaveri_borrowings_schedule_scanned.pdf",
+     "contains": "9.35"
+    },
+    {
+     "filename": "kaveri_financial_model.xlsx",
+     "contains": "HDFC"
+    }
+   ],
+   "note": "scanned table (OCR) or model"
+  },
+  {
+   "id": "kav-12",
+   "query": "board resolution authorising borrowing by NCD issue",
+   "expected": [
+    {
+     "filename": "kaveri_board_resolution_scanned.pdf",
+     "contains": "RESOLVED"
+    }
+   ],
+   "note": "scanned, stamp overlay"
+  },
+  {
+   "id": "kav-13",
+   "query": "who is the authorised signatory of the resolution",
+   "expected": [
+    {
+     "filename": "kaveri_board_resolution_scanned.pdf",
+     "contains": "Meera"
+    }
+   ],
+   "note": "handwritten field on a scan"
+  },
+  {
+   "id": "kav-14",
+   "query": "shareholding of Deccan Growth Fund",
+   "expected": [
+    {
+     "filename": "kaveri_information_memorandum.docx",
+     "contains": "Deccan Growth"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-15",
+   "query": "ESOP pool size",
+   "expected": [
+    {
+     "filename": "kaveri_information_memorandum.docx",
+     "contains": "ESOP"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-16",
+   "query": "EBITDA projection for FY26",
+   "expected": [
+    {
+     "filename": "kaveri_financial_model.xlsx",
+     "contains": "92.43"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-17",
+   "query": "investment highlights",
+   "expected": [
+    {
+     "filename": "kaveri_teaser.pptx",
+     "contains": "highlights"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-18",
+   "query": "what should the presenter emphasise",
+   "expected": [
+    {
+     "filename": "kaveri_teaser.pptx",
+     "contains": "Emphasise"
+    }
+   ],
+   "note": "speaker notes"
+  },
+  {
+   "id": "kav-19",
+   "query": "use of proceeds of the issue",
+   "expected": [
+    {
+     "filename": "kaveri_information_memorandum.docx",
+     "contains": "proceeds"
+    },
+    {
+     "filename": "kaveri_ncd_term_sheet.pdf",
+     "contains": "proceeds"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-20",
+   "query": "conditions precedent to the issue",
+   "expected": [
+    {
+     "filename": "kaveri_ncd_term_sheet.pdf",
+     "contains": "Conditions precedent"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-21",
+   "query": "Company PAN number",
+   "expected": [
+    {
+     "filename": "kaveri_ncd_term_sheet.pdf",
+     "contains": "AAFCK4821M"
+    },
+    {
+     "filename": "kaveri_audited_financials_fy24.pdf",
+     "contains": "AAFCK4821M"
+    },
+    {
+     "filename": "kaveri_board_resolution_scanned.pdf",
+     "contains": "AAFCK4821M"
+    }
+   ],
+   "note": ""
+  },
+  {
+   "id": "kav-22",
+   "query": "lender confirmations certified by the CFO",
+   "expected": [
+    {
+     "filename": "kaveri_borrowings_schedule_scanned.pdf",
+     "contains": "Chief Financial Officer"
+    }
+   ],
+   "note": "scanned body text"
+  }
+ ],
+ "conventions": "Generate the bake-off corpus (fictional 'Project Kaveri' deal pack) + ground_truth.json.\n\nEvery document is rendered from the same element list that produces its ground truth:\nelements are (\"h\", text, level) | (\"p\", text) | (\"t\", name, grid) | (\"fn\", text).\nGround-truth text = headings/paragraphs as-is, tables row by row (non-empty cells joined by\na space), in reading order. Merged cells: text in the first cell of the span, \"\" elsewhere.\n"
+}

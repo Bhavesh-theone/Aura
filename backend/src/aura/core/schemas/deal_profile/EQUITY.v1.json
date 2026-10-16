@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aura:deal_profile/EQUITY/v1",
+  "title": "Equity deal profile",
+  "description": "Terms of a primary or secondary equity round.",
+  "x-transaction-class": "EQUITY",
+  "x-schema-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "round_type": {
+      "type": "string",
+      "enum": [
+        "seed",
+        "series_a",
+        "series_b",
+        "series_c",
+        "series_d_plus",
+        "growth",
+        "pre_ipo",
+        "secondary",
+        "pipe",
+        "qip",
+        "rights_issue"
+      ],
+      "title": "Round type",
+      "description": "Stage or kind of equity round."
+    },
+    "instrument": {
+      "type": "string",
+      "enum": [
+        "equity",
+        "ccps",
+        "ccd",
+        "warrants"
+      ],
+      "title": "Instrument",
+      "description": "Security issued to investors.",
+      "x-enum-labels": {
+        "equity": "Equity shares",
+        "ccps": "Compulsorily convertible preference shares",
+        "ccd": "Compulsorily convertible debentures",
+        "warrants": "Warrants"
+      }
+    },
+    "amount_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Round size",
+      "description": "Total amount raised in the round. In Indian rupees (INR), not crore or lakh."
+    },
+    "primary_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Primary component",
+      "description": "Fresh capital into the company. In Indian rupees (INR), not crore or lakh."
+    },
+    "secondary_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Secondary component",
+      "description": "Shares bought from existing holders. In Indian rupees (INR), not crore or lakh."
+    },
+    "pre_money_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Pre-money valuation",
+      "description": "Pre-money equity valuation. In Indian rupees (INR), not crore or lakh."
+    },
+    "post_money_inr": {
+      "type": "number",
+      "minimum": 0,
+      "title": "Post-money valuation",
+      "description": "Post-money equity valuation. In Indian rupees (INR), not crore or lakh."
+    },
+    "lead_investor": {
+      "type": "string",
+      "maxLength": 200,
+      "title": "Lead investor",
+      "description": "Name of the lead investor, if known."
+    },
+    "cap_table_summary": {
+      "type": "object",
+      "title": "Cap table summary",
+      "description": "Fully diluted shareholding before the round, in %.",
+      "additionalProperties": false,
+      "properties": {
+        "promoters_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "title": "Promoters %",
+          "description": "Promoter and promoter group holding."
+        },
+        "investors_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "title": "Investors %",
+          "description": "Existing institutional investors."
+        },
+        "esop_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "title": "ESOP pool %",
+          "description": "Granted and ungranted ESOP pool."
+        },
+        "public_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "title": "Public %",
+          "description": "Public shareholders (listed companies)."
+        },
+        "others_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "title": "Others %",
+          "description": "Everyone else."
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date",
+          "title": "As of",
+          "description": "Date of the cap table. ISO 8601 date (YYYY-MM-DD)."
+        }
+      }
+    },
+    "board_seats": {
+      "type": "integer",
+      "minimum": 0,
+      "title": "Board seats",
+      "description": "Board seats offered to new investors.",
+      "maximum": 15
+    },
+    "liquidation_preference": {
+      "type": "string",
+      "enum": [
+        "none",
+        "1x_non_participating",
+        "1x_participating",
+        "2x_non_participating"
+      ],
+      "title": "Liquidation preference",
+      "description": "Investor preference on exit."
+    },
+    "anti_dilution": {
+      "type": "string",
+      "enum": [
+        "none",
+        "broad_based_weighted_average",
+        "full_ratchet"
+      ],
+      "title": "Anti-dilution",
+      "description": "Anti-dilution protection."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000,
+      "title": "Notes",
+      "description": "Free-text notes on the deal terms."
+    }
+  }
+}

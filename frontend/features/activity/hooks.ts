@@ -1,11 +1,12 @@
 "use client";
 
-import { useResource } from "@/shared/lib/useResource";
+import { anyEvent } from "@/shared/api/events";
+import { useApi } from "@/shared/lib/useApi";
 import { listActivity } from "./api";
-import { sampleActivity } from "./sample";
 import type { ActivityEntry } from "./types";
 
+/** The audit feed — refreshes on every socket event, polls when the socket is down. */
 export function useActivity() {
-  const resource = useResource<ActivityEntry[]>(listActivity, sampleActivity, [], { pollMs: 15000 });
-  return { ...resource, activity: resource.data };
+  const r = useApi<ActivityEntry[]>(listActivity, [], [], { live: anyEvent, pollMs: 15000 });
+  return { ...r, activity: r.data };
 }

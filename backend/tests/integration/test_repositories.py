@@ -6,20 +6,20 @@ from sqlalchemy.orm import Session
 from aura.core.domain.enums import JobStatus, SegmentStatus
 from aura.core.domain.job import Job
 from aura.core.domain.segment import Segment
-from aura.data.engine import Base, make_engine
 from aura.data.repositories.sql import SqlJobRepository, SqlSegmentRepository
+from aura.data.walls import SYSTEM
+from tests.integration.pgtest import fresh_engine
 
 
 @pytest.fixture()
 def session():
-    engine = make_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    engine = fresh_engine()
     with Session(engine) as s:
         yield s
 
 
 def test_job_roundtrips_as_domain_object(session):
-    repo = SqlJobRepository(session)
+    repo = SqlJobRepository(session, SYSTEM)
     saved = repo.add(Job(id=None, status=JobStatus.PENDING, inputs={"brief": "x"},
                          deal_id=None, result=None, created_at=datetime.now(timezone.utc)))
     assert saved.id is not None
@@ -31,7 +31,7 @@ def test_job_roundtrips_as_domain_object(session):
 
 
 def test_claim_next_queued_returns_only_queued_segments(session):
-    jobs, segs = SqlJobRepository(session), SqlSegmentRepository(session)
+    jobs, segs = SqlJobRepository(session, SYSTEM), SqlSegmentRepository(session)
     job = jobs.add(Job(id=None, status=JobStatus.PENDING, inputs={}, deal_id=None,
                        result=None, created_at=datetime.now(timezone.utc)))
     segs.add(Segment(id=None, job_id=job.id, seq=1, status=SegmentStatus.DONE,

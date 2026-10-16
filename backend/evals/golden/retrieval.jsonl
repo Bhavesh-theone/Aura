@@ -1,0 +1,38 @@
+{"id": "ret-001", "query": "GST show cause notice amount", "expected": [{"filename": "nilgiri_information_memorandum.pdf", "contains": "show cause"}, {"filename": "nilgiri_fdd_red_flags.eml", "contains": "show cause"}], "note": "the IM's answer is on the scanned page 3 (OCR)"}
+{"id": "ret-002", "query": "What is the purchase price and how much goes into escrow?", "expected": [{"filename": "nilgiri_spa_draft.docx", "contains": "escrow"}]}
+{"id": "ret-003", "query": "CCI approval as a condition precedent", "expected": [{"filename": "nilgiri_spa_draft.docx", "contains": "Competition Commission"}]}
+{"id": "ret-004", "query": "FY25 revenue and EBITDA", "expected": [{"filename": "nilgiri_financial_model.xlsx", "contains": "EBITDA"}, {"filename": "nilgiri_information_memorandum.pdf", "contains": "FY25"}]}
+{"id": "ret-005", "query": "term loan outstanding with State Bank of India", "expected": [{"filename": "nilgiri_financial_model.xlsx", "contains": "State Bank of India"}]}
+{"id": "ret-006", "query": "promoter shareholding in the cap table", "expected": [{"filename": "nilgiri_financial_model.xlsx", "contains": "Raghavan family"}]}
+{"id": "ret-007", "query": "customer concentration with the largest customer", "expected": [{"filename": "nilgiri_management_presentation.pptx", "contains": "DesiMart"}]}
+{"id": "ret-008", "query": "how many manufacturing plants does the company run", "expected": [{"filename": "nilgiri_management_presentation.pptx", "contains": "12 manufacturing plants"}]}
+{"id": "ret-009", "query": "related party payments to a promoter entity", "expected": [{"filename": "nilgiri_fdd_red_flags.eml", "contains": "Kaveri Logistics"}]}
+{"id": "ret-010", "query": "environmental clearance status for the Hosur plant", "expected": [{"filename": "nilgiri_fdd_red_flags.eml", "contains": "Environmental clearance"}, {"filename": "nilgiri_dd_tracker.csv", "contains": "Environmental clearance"}]}
+{"id": "ret-011", "query": "board approval of the acquisition", "expected": [{"filename": "nilgiri_board_minutes.md", "contains": "approved"}]}
+{"id": "ret-012", "query": "non-compete period for the promoters", "expected": [{"filename": "nilgiri_spa_draft.docx", "contains": "non-compete"}]}
+{"id": "ret-013", "query": "cap on the tax indemnity", "expected": [{"filename": "nilgiri_spa_draft.docx", "contains": "indemnity"}]}
+{"id": "ret-014", "query": "pending litigation against the company", "expected": [{"filename": "nilgiri_information_memorandum.pdf", "contains": "litigation"}]}
+{"id": "ret-015", "query": "when is export revenue recognised", "expected": [{"filename": "nilgiri_management_presentation.pptx", "contains": "recognised on dispatch"}]}
+{"id": "ret-016", "query": "working capital peg recommended by the FDD advisor", "expected": [{"filename": "nilgiri_fdd_red_flags.eml", "contains": "peg"}]}
+{"id": "kav-01", "query": "What was revenue from operations in FY24?", "expected": [{"filename": "kaveri_audited_financials_fy24.pdf", "contains": "412.38"}, {"filename": "kaveri_financial_model.xlsx", "contains": "412.38"}, {"filename": "kaveri_information_memorandum.docx", "contains": "412.38"}, {"filename": "kaveri_teaser.pptx", "contains": "412.38"}]}
+{"id": "kav-02", "query": "exceptional items charge in the statement of profit and loss", "expected": [{"filename": "kaveri_audited_financials_fy24.pdf", "contains": "Exceptional"}]}
+{"id": "kav-03", "query": "trade receivables as at 31 March 2024", "expected": [{"filename": "kaveri_audited_financials_fy24.pdf", "contains": "88.63"}]}
+{"id": "kav-04", "query": "net debt", "expected": [{"filename": "kaveri_audited_financials_fy24.pdf", "contains": "96.40"}, {"filename": "kaveri_financial_model.xlsx", "contains": "96.4"}, {"filename": "kaveri_information_memorandum.docx", "contains": "96.40"}, {"filename": "kaveri_teaser.pptx", "contains": "96.40"}, {"filename": "kaveri_borrowings_schedule_scanned.pdf", "contains": "96.40"}]}
+{"id": "kav-05", "query": "coupon rate on the debentures", "expected": [{"filename": "kaveri_ncd_term_sheet.pdf", "contains": "11.25%"}, {"filename": "kaveri_teaser.pptx", "contains": "11.25%"}]}
+{"id": "kav-06", "query": "tenor of the NCD", "expected": [{"filename": "kaveri_ncd_term_sheet.pdf", "contains": "60 months"}, {"filename": "kaveri_teaser.pptx", "contains": "60 months"}]}
+{"id": "kav-07", "query": "security and charge over assets", "expected": [{"filename": "kaveri_ncd_term_sheet.pdf", "contains": "exclusive charge"}, {"filename": "kaveri_teaser.pptx", "contains": "exclusive charge"}]}
+{"id": "kav-08", "query": "governing law and jurisdiction", "expected": [{"filename": "kaveri_ncd_term_sheet.pdf", "contains": "laws of India"}, {"filename": "kaveri_teaser.pptx", "contains": "laws of India"}]}
+{"id": "kav-09", "query": "financial covenants DSCR", "expected": [{"filename": "kaveri_ncd_term_sheet.pdf", "contains": "DSCR"}]}
+{"id": "kav-10", "query": "State Bank of India term loan outstanding", "expected": [{"filename": "kaveri_borrowings_schedule_scanned.pdf", "contains": "42.30"}, {"filename": "kaveri_financial_model.xlsx", "contains": "State Bank"}], "note": "scanned table (OCR) or model"}
+{"id": "kav-11", "query": "HDFC Bank interest rate", "expected": [{"filename": "kaveri_borrowings_schedule_scanned.pdf", "contains": "9.35"}, {"filename": "kaveri_financial_model.xlsx", "contains": "HDFC"}], "note": "scanned table (OCR) or model"}
+{"id": "kav-12", "query": "board resolution authorising borrowing by NCD issue", "expected": [{"filename": "kaveri_board_resolution_scanned.pdf", "contains": "RESOLVED"}], "note": "scanned, stamp overlay"}
+{"id": "kav-13", "query": "who is the authorised signatory of the resolution", "expected": [{"filename": "kaveri_board_resolution_scanned.pdf", "contains": "Meera"}], "note": "handwritten field on a scan"}
+{"id": "kav-14", "query": "shareholding of Deccan Growth Fund", "expected": [{"filename": "kaveri_information_memorandum.docx", "contains": "Deccan Growth"}]}
+{"id": "kav-15", "query": "ESOP pool size", "expected": [{"filename": "kaveri_information_memorandum.docx", "contains": "ESOP"}]}
+{"id": "kav-16", "query": "EBITDA projection for FY26", "expected": [{"filename": "kaveri_financial_model.xlsx", "contains": "92.43"}]}
+{"id": "kav-17", "query": "investment highlights", "expected": [{"filename": "kaveri_teaser.pptx", "contains": "highlights"}]}
+{"id": "kav-18", "query": "what should the presenter emphasise", "expected": [{"filename": "kaveri_teaser.pptx", "contains": "Emphasise"}], "note": "speaker notes"}
+{"id": "kav-19", "query": "use of proceeds of the issue", "expected": [{"filename": "kaveri_information_memorandum.docx", "contains": "proceeds"}, {"filename": "kaveri_ncd_term_sheet.pdf", "contains": "proceeds"}]}
+{"id": "kav-20", "query": "conditions precedent to the issue", "expected": [{"filename": "kaveri_ncd_term_sheet.pdf", "contains": "Conditions precedent"}]}
+{"id": "kav-21", "query": "Company PAN number", "expected": [{"filename": "kaveri_ncd_term_sheet.pdf", "contains": "AAFCK4821M"}, {"filename": "kaveri_audited_financials_fy24.pdf", "contains": "AAFCK4821M"}, {"filename": "kaveri_board_resolution_scanned.pdf", "contains": "AAFCK4821M"}]}
+{"id": "kav-22", "query": "lender confirmations certified by the CFO", "expected": [{"filename": "kaveri_borrowings_schedule_scanned.pdf", "contains": "Chief Financial Officer"}], "note": "scanned body text"}

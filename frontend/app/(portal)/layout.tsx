@@ -1,34 +1,54 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/features/auth/hooks";
-import { ApprovalsProvider } from "@/features/approvals/provider";
 import { EventsProvider } from "@/shared/api/events";
 import { PortalShell } from "@/shared/ui/shell/PortalShell";
-import { Spinner } from "@/shared/ui/Button";
+import { AuraMark } from "@/shared/ui/Mark";
+import { ServerDown } from "@/shared/ui/States";
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
-  const { user, ready } = useAuth();
+  const { user, ready, serverDown, retry } = useAuth();
   const router = useRouter();
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
-    if (ready && !user) router.replace("/login");
-  }, [ready, user, router]);
+    if (ready && !user && !serverDown) router.replace("/login");
+  }, [ready, user, serverDown, router]);
+
+  // Keep knocking while the server is away; the page recovers by itself.
+  useEffect(() => {
+    if (!serverDown) return;
+    setRetrying(false);
+    const id = setInterval(retry, 8000);
+    return () => clearInterval(id);
+  }, [serverDown, retry]);
+
+  if (ready && serverDown) {
+    return (
+      <ServerDown
+        retrying={retrying}
+        onRetry={() => {
+          setRetrying(true);
+          retry();
+          setTimeout(() => setRetrying(false), 1500);
+        }}
+      />
+    );
+  }
 
   if (!ready || !user) {
     return (
-      <div className="flex h-screen items-center justify-center bg-appbg text-muted">
-        <Spinner className="h-5 w-5" />
+      <div className="flex h-screen items-center justify-center bg-canvas">
+        <AuraMark size={28} className="a-pulse" />
       </div>
     );
   }
 
   return (
     <EventsProvider enabled>
-      <ApprovalsProvider>
-        <PortalShell>{children}</PortalShell>
-      </ApprovalsProvider>
+      <PortalShell>{children}</PortalShell>
     </EventsProvider>
   );
 }

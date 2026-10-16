@@ -22,12 +22,63 @@ export function setToken(token: string | null) {
   }
 }
 
+/* ------------------------------ Reachability ------------------------------ */
+
+/**
+ * Whether the Aura server answered the last request. Any HTTP response (even a
+ * 404) means "up"; only a failed connection means "down". Timeouts leave it
+ * unchanged — a slow server is still a server.
+ */
+export type Reachability = "unknown" | "up" | "down";
+let reach: Reachability = "unknown";
+const reachListeners = new Set<(r: Reachability) => void>();
+
+function setReach(next: Reachability) {
+  if (reach === next) return;
+  reach = next;
+  reachListeners.forEach((l) => l(next));
+}
+export function getReachability() {
+  return reach;
+}
+export function onReachability(listener: (r: Reachability) => void) {
+  reachListeners.add(listener);
+  return () => {
+    reachListeners.delete(listener);
+  };
+}
+
+export const SERVER_DOWN_MESSAGE = `Can’t reach the Aura server at ${API_BASE}.`;
+
+/** Pull the backend's own message out of a FastAPI error body. */
+export function messageFromBody(body: unknown): string | null {
+  const raw = body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null;
+  if (Array.isArray(raw)) {
+    return raw
+      .map((d) => (d && typeof d === "object" && "msg" in d ? String((d as { msg: unknown }).msg) : String(d)))
+      .join("; ");
+  }
+  if (raw !== null && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    if (typeof o.message === "string") return o.message;
+    return JSON.stringify(raw);
+  }
+  return raw !== null && raw !== undefined ? String(raw) : null;
+}
+
+/** Tells the auth layer the session is gone; it signs the user out. */
+export function notifyAuthExpired() {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("yuki:auth-expired"));
+}
+
 export type ApiErrorKind = "network" | "timeout" | "auth" | "forbidden" | "http" | "parse";
 
 export class ApiError extends Error {
   kind: ApiErrorKind;
   status: number | null;
   detail: unknown;
+  /** Seconds from a Retry-After header (429), when the server sent one. */
+  retryAfter: number | null = null;
 
   constructor(kind: ApiErrorKind, message: string, status: number | null = null, detail?: unknown) {
     super(message);
@@ -37,14 +88,29 @@ export class ApiError extends Error {
     this.detail = detail;
   }
 
-  /**
-   * True only when the backend could not be reached at all — a genuinely dead
-   * server. Deliberately excludes "timeout": a slow-but-alive API must never
-   * cause callers to substitute sample data for the live queue.
-   */
+  /** True only when the backend could not be reached at all. */
   get isUnreachable() {
     return this.kind === "network";
   }
+}
+
+/** Map an HTTP failure to a typed ApiError (shared by fetch, XHR and download). */
+export function errorForStatus(status: number, body: unknown, sentToken: boolean, fallback?: string): ApiError {
+  const msg = messageFromBody(body);
+  if (status === 401) {
+    // Only an expired/rejected *existing* session bounces the user out. A
+    // failed login carries no token and must surface the real reason.
+    if (sentToken) {
+      notifyAuthExpired();
+      return new ApiError("auth", msg || "Your session has expired. Please sign in again.", 401, body);
+    }
+    return new ApiError("auth", msg || "Invalid credentials.", 401, body);
+  }
+  if (status === 403) {
+    // Signed in but not permitted. Signing out here would be wrong.
+    return new ApiError("forbidden", msg || "Your role can’t do that.", 403, body);
+  }
+  return new ApiError("http", msg || fallback || `Request failed (${status})`, status, body);
 }
 
 type RequestOptions = {
@@ -53,6 +119,10 @@ type RequestOptions = {
   auth?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Extra request headers (e.g. Idempotency-Key). */
+  headers?: Record<string, string>;
+  /** Called with the raw Response of a successful call (to read status/headers). */
+  onResponse?: (res: Response) => void;
 };
 
 /**
@@ -60,15 +130,15 @@ type RequestOptions = {
  * into an ApiError so callers never see a raw TypeError from a dead server.
  */
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, auth = true, signal, timeoutMs = 12000 } = options;
+  const { method = "GET", body, auth = true, signal, timeoutMs = 12000, headers: extraHeaders, onResponse } = options;
 
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const headers: Record<string, string> = { Accept: "application/json", ...extraHeaders };
+  const isForm = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
   if (auth) {
     const token = getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
   }
-
   const sentToken = auth && Boolean(headers["Authorization"]);
 
   const controller = new AbortController();
@@ -84,93 +154,174 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     res = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
       signal: controller.signal,
       cache: "no-store",
     });
   } catch (err) {
-    // A timeout means the server is alive but slow — on CPU-only inference that
-    // is normal. It must NOT be reported as unreachable, or callers swap in
-    // sample data and render fabricated approvals as if they were live.
     if (timedOut) {
       throw new ApiError(
         "timeout",
-        `The API did not respond within ${Math.round(timeoutMs / 1000)}s.`,
+        `The Aura server did not respond within ${Math.round(timeoutMs / 1000)}s.`,
         null,
         err instanceof Error ? err.message : err,
       );
     }
-    throw new ApiError(
-      "network",
-      `Cannot reach the Yuki OS API at ${API_BASE}`,
-      null,
-      err instanceof Error ? err.message : err,
-    );
+    setReach("down");
+    throw new ApiError("network", SERVER_DOWN_MESSAGE, null, err instanceof Error ? err.message : err);
   } finally {
     clearTimeout(timer);
   }
+  setReach("up");
 
-  // Read the body first so the backend's own message ("Invalid credentials")
-  // survives, rather than being overwritten by a generic session-expiry string.
-  let detail: unknown = null;
   if (!res.ok) {
+    let detail: unknown = null;
     try {
       detail = await res.json();
     } catch {
       /* non-JSON error body */
     }
+    const err = errorForStatus(res.status, detail, sentToken);
+    const raw = res.headers.get("Retry-After");
+    if (raw && Number.isFinite(Number(raw))) err.retryAfter = Number(raw);
+    throw err;
   }
-  const detailMessage =
-    detail && typeof detail === "object" && "detail" in detail
-      ? String((detail as { detail: unknown }).detail)
-      : null;
-
-  if (res.status === 401) {
-    // Only an expired/rejected *existing* session should bounce the user out.
-    // A failed login carries no token and must surface the real reason.
-    if (sentToken) {
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("yuki:auth-expired"));
-      }
-      throw new ApiError(
-        "auth",
-        detailMessage || "Your session has expired. Please sign in again.",
-        401,
-        detail,
-      );
-    }
-    throw new ApiError("auth", detailMessage || "Invalid credentials.", 401, detail);
-  }
-
-  if (res.status === 403) {
-    // Authenticated but not permitted (e.g. non-admin deciding an approval).
-    // Signing the user out here would be wrong — they are correctly signed in.
-    throw new ApiError(
-      "forbidden",
-      detailMessage || "You do not have permission to do that.",
-      403,
-      detail,
-    );
-  }
-
-  if (!res.ok) {
-    throw new ApiError("http", detailMessage || `Request failed (${res.status})`, res.status, detail);
-  }
+  onResponse?.(res);
 
   if (res.status === 204) return undefined as T;
 
   try {
     return (await res.json()) as T;
   } catch (err) {
-    throw new ApiError("parse", "The API returned a malformed response.", res.status, err);
+    throw new ApiError("parse", "The server returned a malformed response.", res.status, err);
   }
+}
+
+/** Authenticated file download (the bearer token can't ride on a plain link). */
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const token = getToken();
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      cache: "no-store",
+    });
+  } catch {
+    setReach("down");
+    throw new ApiError("network", SERVER_DOWN_MESSAGE);
+  }
+  setReach("up");
+  if (!res.ok) {
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      /* non-JSON */
+    }
+    throw errorForStatus(
+      res.status,
+      body,
+      Boolean(token),
+      res.status === 404 ? "That file isn’t available to you — it may sit behind a deal wall." : `Download failed (${res.status})`,
+    );
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function checkHealth(): Promise<boolean> {
   try {
     await apiFetch<{ status: string }>("/api/health", { auth: false, timeoutMs: 4000 });
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // Any HTTP answer means the server is alive.
+    return err instanceof ApiError && err.status !== null;
   }
+}
+
+/** The filename a Content-Disposition header names (RFC 6266 filename* first), or null. */
+export function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(header);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      /* fall through to the plain name */
+    }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/.exec(header);
+  return plain ? plain[1].trim() : null;
+}
+
+export type DownloadedFile = { filename: string; size: number; sha256: string | null };
+
+/**
+ * Authenticated download that saves the file under the name the server gives
+ * (Content-Disposition), with a timeout and abort. Failures are ApiErrors like
+ * apiFetch's; a 429 carries `retryAfter`.
+ */
+export async function apiDownloadFile(
+  path: string,
+  fallbackName: string,
+  { signal, timeoutMs = 120000 }: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<DownloadedFile> {
+  const token = getToken();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  if (signal) signal.addEventListener("abort", () => controller.abort(), { once: true });
+  let res: Response;
+  let blob: Blob;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    setReach("up");
+    if (!res.ok) {
+      let body: unknown = null;
+      try {
+        body = await res.json();
+      } catch {
+        /* non-JSON */
+      }
+      const err = errorForStatus(
+        res.status,
+        body,
+        Boolean(token),
+        res.status === 404 ? "That deal isn’t available to you — it may sit behind a deal wall." : `Download failed (${res.status})`,
+      );
+      const raw = res.headers.get("Retry-After");
+      if (raw && Number.isFinite(Number(raw))) err.retryAfter = Number(raw);
+      throw err;
+    }
+    blob = await res.blob();
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    if (timedOut) throw new ApiError("timeout", `The export did not finish within ${Math.round(timeoutMs / 1000)}s.`);
+    if (signal?.aborted) throw new ApiError("network", "Cancelled.");
+    setReach("down");
+    throw new ApiError("network", SERVER_DOWN_MESSAGE);
+  } finally {
+    clearTimeout(timer);
+  }
+  const filename = filenameFromDisposition(res.headers.get("Content-Disposition")) || fallbackName;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return { filename, size: blob.size, sha256: res.headers.get("X-Content-SHA256") };
 }
